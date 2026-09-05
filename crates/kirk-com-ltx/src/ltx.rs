@@ -40,8 +40,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 ///
 /// `tokio::fs` performs blocking reads, which cannot be cancelled by task
 /// abort (a thread stuck in `read()` on a FIFO survives `close()` on macOS
-/// and pins runtime teardown). Opening with `O_NONBLOCK` and driving the fd
-/// through [`AsyncFd`] keeps every wait abort-safe.
+/// and pins runtime teardown). Opening with `O_NONBLOCK` and driving reads
+/// through [`AsyncFd`] keeps every read abort-safe; writes loop on the
+/// non-blocking fd directly (see [`Fifo::write_all`]).
 struct Fifo {
     inner: AsyncFd<std::fs::File>,
 }
@@ -107,32 +108,36 @@ impl Fifo {
 
     /// Write the whole buffer.
     ///
+    /// A plain non-blocking write loop: the fd is `O_NONBLOCK`, so the kernel
+    /// never parks this task inside `write`. On backpressure (`WouldBlock`)
+    /// yield so the peer's reader runs instead of spinning. Epoll writability
+    /// is deliberately not used here: a freshly opened FIFO write end has no
+    /// state transition for edge-triggered readiness to report, and the wait
+    /// can stall forever on Linux while the pipe sits empty with a live
+    /// reader.
+    ///
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] on I/O failure (including a vanished reader).
     async fn write_all(&self, mut bytes: &[u8]) -> Result<(), KirkError> {
         while !bytes.is_empty() {
-            let mut guard = self
-                .inner
-                .writable()
-                .await
-                .map_err(|e| KirkError::Ltx(format!("can't wait for LTX input: {e}")))?;
-            match guard.try_io(|file| file.get_ref().write(bytes)) {
-                Ok(Ok(0)) => {
+            match self.inner.get_ref().write(bytes) {
+                Ok(0) => {
                     return Err(KirkError::Ltx(
                         "can't write to LTX input: no reader".to_string(),
                     ));
                 }
-                Ok(Ok(count)) => {
+                Ok(count) => {
                     bytes = bytes
                         .get(count..)
                         .ok_or_else(|| KirkError::Ltx("short LTX write".to_string()))?;
                 }
-                Ok(Err(error)) if error.kind() == ErrorKind::WouldBlock => {}
-                Ok(Err(error)) => {
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => {
                     return Err(KirkError::Ltx(format!("can't write to LTX input: {error}")));
                 }
-                Err(_not_ready) => {}
             }
         }
         Ok(())
