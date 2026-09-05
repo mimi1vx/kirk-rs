@@ -3,9 +3,9 @@
 //! [`CliSut`] and [`CliFramework`] adapt the real [`GenericSut`] and
 //! [`LtpFramework`] to the [`Session`] traits, so no new glue crates are
 //! needed. The SUT owns its channel; the framework borrows it through the
-//! shared [`SutHandle`]. UI selection mirrors upstream (`workers > 1` →
+//! shared `SutHandle`. UI selection mirrors upstream (`workers > 1` →
 //! parallel, `verbose` → verbose, else simple); `Ctrl-C` maps to
-//! [`RC_INTERRUPT`](crate::args::RC_INTERRUPT).
+//! [`RC_INTERRUPT`].
 
 use std::collections::HashMap;
 use std::sync::Arc;

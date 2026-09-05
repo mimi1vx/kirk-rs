@@ -1,7 +1,7 @@
 //! Test scheduler ported from `TestScheduler` in `kirk/libkirk/scheduler.py`.
 //!
-//! Parallel tests run as owned [`JoinSet`](tokio::task::JoinSet) tasks gated
-//! by a per-schedule [`Semaphore`](tokio::sync::Semaphore); every task is
+//! Parallel tests run as owned [`JoinSet`] tasks gated
+//! by a per-schedule [`Semaphore`]; every task is
 //! joined before `schedule` returns, so no task outlives the call. The
 //! semaphore is recreated per phase (parallel vs sequential) like upstream,
 //! so `stop` waiting on one permit really waits for the running test.

@@ -435,7 +435,7 @@ async fn get_tainted_info_clean_kernel() {
     sut.start(None).await.expect("start");
     let info = sut.get_tainted_info().await.expect("taint");
     assert_eq!(info.code, 0);
-    assert!(info.messages.is_empty());
+    assert_eq!(info.messages, [] as [String; 0]);
 }
 
 #[tokio::test]

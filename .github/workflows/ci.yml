@@ -82,6 +82,8 @@ jobs:
   doc:
     name: doc (stable)
     runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

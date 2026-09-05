@@ -7,8 +7,8 @@
 //! frames from the output FIFO and feeds the pending requests in order.
 //!
 //! Security bounds: the streaming buffer is capped at
-//! [`MAX_BUFFERED_BYTES`], frames decode with a nesting depth cap of
-//! [`MAX_DECODE_DEPTH`], and every offset/length uses `checked_*` or
+//! `MAX_BUFFERED_BYTES`, frames decode with a nesting depth cap of
+//! `MAX_DECODE_DEPTH`, and every offset/length uses `checked_*` or
 //! `try_from` conversions.
 
 use std::collections::{HashMap, VecDeque};

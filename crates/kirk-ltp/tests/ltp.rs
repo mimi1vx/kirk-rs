@@ -360,7 +360,7 @@ async fn find_suite_max_runtime_filters_slow_tests() {
         .find_suite(&mut channel, "slow_suite")
         .await
         .expect("suite");
-    assert!(suite.tests().is_empty());
+    assert_eq!(suite.tests(), []);
 }
 
 #[tokio::test]

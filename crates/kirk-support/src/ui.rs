@@ -745,7 +745,7 @@ impl ParallelUi {
 ///
 /// # Errors
 ///
-/// Returns [`KirkError`] when a registration fails.
+/// Returns [`KirkError`](kirk_core::KirkError) when a registration fails.
 pub async fn attach_console(
     ui: &Arc<ConsoleUi>,
     registry: &EventRegistry,

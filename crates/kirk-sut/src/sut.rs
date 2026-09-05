@@ -2,7 +2,7 @@
 //!
 //! [`Sut`] mirrors the Python `SUT` plugin base: probe helpers with a 1.5s
 //! timeout collapsing to `"unknown"`, [`Sut::get_info`] (sequential, or a
-//! [`JoinSet`](tokio::task::JoinSet) gather when [`Sut::optimize`] is set),
+//! [`JoinSet`] gather when [`Sut::optimize`] is set),
 //! taint parsing over [`TAINTED_MSG`], and fault-injection helpers over
 //! [`FAULT_INJECTION_FILES`]. [`GenericSut`](crate::GenericSut) wires these
 //! defaults to a concrete channel.
@@ -10,9 +10,9 @@
 //! Deliberate differences from upstream:
 //!
 //! * The parallel gather cannot share one channel object: every
-//!   [`ComChannel`](kirk_com::ComChannel) method takes `&mut self`, so each
+//!   [`ComChannel`] method takes `&mut self`, so each
 //!   probe runs on an independent clone
-//!   ([`ComChannel::clone_channel_box`](kirk_com::ComChannel::clone_channel_box))
+//!   ([`ComChannel::clone_channel_box`])
 //!   that is communicated first. Probes only run in parallel when the
 //!   channel reports [`parallel_execution`](kirk_com::ComChannel::parallel_execution);
 //!   otherwise `optimize` falls back to sequential probing with identical results.
@@ -21,7 +21,7 @@
 //!   sections; a concurrent caller reuses the cached value when one exists
 //!   and probes alongside otherwise, instead of blocking on the probe lock
 //!   like upstream does.
-//! * Command strings travel through [`ComChannel::run_command`](kirk_com::ComChannel::run_command)
+//! * Command strings travel through [`ComChannel::run_command`]
 //!   opaquely. Channels must treat them as argv and never hand them to a
 //!   shell; probes such as `. /etc/os-release && echo "$ID"` are preserved
 //!   byte-for-byte from upstream.
@@ -254,7 +254,7 @@ pub trait Sut: Plugin + Send + Sync {
     }
 
     /// Collect SUT information, probing sequentially or via a
-    /// [`JoinSet`](tokio::task::JoinSet) gather when [`Sut::optimize`] is set
+    /// [`JoinSet`] gather when [`Sut::optimize`] is set
     /// and the channel supports parallel execution.
     ///
     /// # Errors

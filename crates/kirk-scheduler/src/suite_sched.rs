@@ -1,8 +1,8 @@
 //! Suite scheduler ported from `SuiteScheduler` in `kirk/libkirk/scheduler.py`.
 //!
 //! Suites run sequentially; each suite's tests go through the inner
-//! [`TestScheduler`](crate::test_sched::TestScheduler). Kernel failures reboot
-//! the SUT via [`SuiteScheduler::restart_sut`], and a suite timeout marks the
+//! [`TestScheduler`]. Kernel failures reboot
+//! the SUT via `SuiteScheduler::restart_sut`, and a suite timeout marks the
 //! leftover tests `CONF`/skipped with return code 32.
 //!
 //! Deliberate differences from upstream:

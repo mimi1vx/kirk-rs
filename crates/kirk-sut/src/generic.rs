@@ -1,11 +1,11 @@
 //! Generic SUT ported from `kirk/libkirk/sut_base.py`.
 //!
 //! [`GenericSut`] wires the [`Sut`] defaults to one channel looked up in a
-//! [`Registry`](kirk_com::Registry) via [`GenericSut::setup_with_registry`],
+//! [`Registry`] via [`GenericSut::setup_with_registry`],
 //! replacing the upstream global channel list. Lifecycle delegates to
-//! [`ComChannel::ensure_communicate`](kirk_com::ComChannel::ensure_communicate),
-//! [`ComChannel::stop`](kirk_com::ComChannel::stop), and
-//! [`ComChannel::active`](kirk_com::ComChannel::active).
+//! [`ComChannel::ensure_communicate`],
+//! [`ComChannel::stop`], and
+//! [`ComChannel::active`].
 
 use std::collections::HashMap;
 

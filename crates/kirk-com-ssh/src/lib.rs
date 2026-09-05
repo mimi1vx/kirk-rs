@@ -16,7 +16,7 @@
 //!   handles; in-flight commands fail closed on the dropped session.
 //! - `reset_cmd` runs via argv, never via a shell (upstream uses
 //!   `create_subprocess_shell`).
-//! - `fetch_file` enforces [`FETCH_SIZE_CAP`](config::FETCH_SIZE_CAP).
+//! - `fetch_file` enforces [`FETCH_SIZE_CAP`].
 //! - No overall timeout on the `run_command` data loop (matches upstream
 //!   `wait_closed`); every initiating call (dial/auth/open/exec) has one.
 

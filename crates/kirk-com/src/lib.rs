@@ -49,7 +49,7 @@ pub struct CmdResult {
 /// Communication channel plugin.
 ///
 /// Object-safe; registries hold `Box<dyn ComChannel>`. All async methods
-/// carry a `Send` bound via [`async_trait`], so channels work inside
+/// carry a `Send` bound via `async_trait`, so channels work inside
 /// `tokio::spawn` and `select!`. Methods take `&mut self`, so no lock is
 /// held across an `.await` inside this crate.
 #[async_trait]

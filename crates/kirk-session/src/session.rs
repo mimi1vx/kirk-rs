@@ -1,6 +1,6 @@
 //! Session runner ported from `kirk/libkirk/session.py`.
 //!
-//! [`Session`] drives a [`SuiteScheduler`](kirk_scheduler::SuiteScheduler)
+//! [`Session`] drives a [`SuiteScheduler`]
 //! over selected suites: executed-file restore/skip, regex test filtering,
 //! iterate renaming, randomize/runtime/fault-injection/dry-run options, and
 //! `results.json` plus report export.

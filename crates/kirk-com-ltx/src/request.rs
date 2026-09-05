@@ -1,15 +1,15 @@
 //! LTX protocol requests ported from `Request`/`Requests` in
 //! `kirk/libkirk/channels/ltx.py`.
 //!
-//! Each request packs itself into msgpack bytes ([`Request::pack`]) and
-//! consumes decoded reply frames ([`Request::feed`]) until completed, exactly
-//! like the Python echo state machines. [`Request::feed`] returns the
+//! Each request packs itself into msgpack bytes (`Request::pack`) and
+//! consumes decoded reply frames (`Request::feed`) until completed, exactly
+//! like the Python echo state machines. `Request::feed` returns the
 //! request's [`Reply`] once, when the request completes.
 //!
 //! Security bounds (see `sota-code-security`): frames hold at most
-//! [`MAX_FIELDS`] scalar fields, nested arrays/maps are rejected, individual
-//! string/binary fields are capped at [`MAX_FIELD_BYTES`], accumulated
-//! `DATA`/`LOG` payloads are capped ([`MAX_FILE_BYTES`]/[`MAX_STDOUT_BYTES`])
+//! `MAX_FIELDS` scalar fields, nested arrays/maps are rejected, individual
+//! string/binary fields are capped at `MAX_FIELD_BYTES`, accumulated
+//! `DATA`/`LOG` payloads are capped (`MAX_FILE_BYTES`/`MAX_STDOUT_BYTES`)
 //! with `checked_*` arithmetic, and every length conversion uses `try_from`.
 
 use kirk_core::KirkError;

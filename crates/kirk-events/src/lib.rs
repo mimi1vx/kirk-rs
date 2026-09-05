@@ -8,7 +8,7 @@
 //! Deliberate differences from upstream:
 //!
 //! * Handlers are fallible: returning `Err` models a Python handler raising.
-//!   Panics are still isolated via owned [`JoinSet`](tokio::task::JoinSet)
+//!   Panics are still isolated via owned [`JoinSet`]
 //!   tasks and forwarded like any other failure.
 //! * Failures reach [`INTERNAL_ERROR`] handlers as [`EventArgs`] holding the
 //!   failing event name plus the failure description. Failures raised *by*
@@ -51,7 +51,7 @@ pub struct EventArgs {
     pub message: Option<String>,
 }
 
-/// Boxed future every handler returns; `Send` so a [`JoinSet`](tokio::task::JoinSet) can own it.
+/// Boxed future every handler returns; `Send` so a [`JoinSet`] can own it.
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 /// Outcome of one handler invocation; `Err` holds the failure description.

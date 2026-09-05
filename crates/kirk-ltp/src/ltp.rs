@@ -3,9 +3,9 @@
 //! # Security
 //!
 //! `fetch_file` paths are confined to the framework root
-//! ([`validate_suite_name`](crate::parse::validate_suite_name) rejects
+//! ([`validate_suite_name`] rejects
 //! separators and parent references), `ltp.json` is capped at
-//! [`MAX_METADATA_BYTES`](crate::parse::MAX_METADATA_BYTES), and test
+//! [`MAX_METADATA_BYTES`], and test
 //! stdout is truncated to
 //! [`MAX_STDOUT_BYTES`](crate::parse::MAX_STDOUT_BYTES) before parsing.
 //! All regexes are linear-time (no nested quantifiers).
