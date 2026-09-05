@@ -1,0 +1,19 @@
+[package]
+name = "kirk-session"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+regex.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+kirk-core = { path = "../kirk-core" }
+kirk-events = { path = "../kirk-events" }
+kirk-support = { path = "../kirk-support" }
+kirk-scheduler = { path = "../kirk-scheduler" }
+kirk-com = { path = "../kirk-com" }

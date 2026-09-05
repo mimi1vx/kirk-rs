@@ -1,0 +1,18 @@
+[package]
+name = "kirk-com-ssh"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+kirk-com = { path = "../kirk-com" }
+kirk-core = { path = "../kirk-core" }
+kirk-plugin = { path = "../kirk-plugin" }
+# Workspace pins russh 0.54, which is not vendored in the offline cargo
+# cache (only 0.62/0.63 are). Declared directly per task instructions.
+russh = { version = "0.63" }

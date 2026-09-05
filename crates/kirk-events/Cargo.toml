@@ -1,0 +1,11 @@
+[package]
+name = "kirk-events"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio.workspace = true
+kirk-core = { path = "../kirk-core" }

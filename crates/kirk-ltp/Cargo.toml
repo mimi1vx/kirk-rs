@@ -1,0 +1,18 @@
+[package]
+name = "kirk-ltp"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+kirk-com = { path = "../kirk-com" }
+kirk-core = { path = "../kirk-core" }
+
+[dev-dependencies]
+tokio.workspace = true
+kirk-plugin = { path = "../kirk-plugin" }

@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+thiserror = { version = "2" }
+async-trait = { version = "0.1" }
+libloading = { version = "0.8" }
+russh = { version = "0.54" }
+rmp-serde = { version = "1" }
+regex = { version = "1" }
+rand = { version = "0.8" }
+zeroize = { version = "1" }
+subtle = { version = "2" }
+anyhow = { version = "1" }
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"

@@ -1,0 +1,14 @@
+[package]
+name = "kirk-scheduler"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+kirk-core = { path = "../kirk-core" }
+kirk-com = { path = "../kirk-com" }
+kirk-events = { path = "../kirk-events" }

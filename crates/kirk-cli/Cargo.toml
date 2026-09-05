@@ -1,0 +1,28 @@
+[package]
+name = "kirk-cli"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kirk"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+regex.workspace = true
+tokio.workspace = true
+kirk-com = { path = "../kirk-com" }
+kirk-com-shell = { path = "../kirk-com-shell" }
+kirk-core = { path = "../kirk-core" }
+kirk-events = { path = "../kirk-events" }
+kirk-ltp = { path = "../kirk-ltp" }
+kirk-plugin = { path = "../kirk-plugin" }
+kirk-scheduler = { path = "../kirk-scheduler" }
+kirk-session = { path = "../kirk-session" }
+kirk-support = { path = "../kirk-support" }
+kirk-sut = { path = "../kirk-sut" }

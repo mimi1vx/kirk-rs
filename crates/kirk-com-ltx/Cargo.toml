@@ -1,0 +1,17 @@
+[package]
+name = "kirk-com-ltx"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+libc = "0.2"
+kirk-core = { path = "../kirk-core" }
+kirk-com = { path = "../kirk-com" }
+kirk-plugin = { path = "../kirk-plugin" }

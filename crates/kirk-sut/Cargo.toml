@@ -1,0 +1,16 @@
+[package]
+name = "kirk-sut"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+regex.workspace = true
+tokio.workspace = true
+kirk-com = { path = "../kirk-com" }
+kirk-core = { path = "../kirk-core" }
+kirk-events = { path = "../kirk-events" }
+kirk-plugin = { path = "../kirk-plugin" }
