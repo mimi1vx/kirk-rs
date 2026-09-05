@@ -509,7 +509,7 @@ where
     }
 
     async fn schedule_infinite(&self, suites: &[Suite]) -> Result<(), KirkError> {
-        let mut count = 1usize;
+        let mut count = 0usize;
         while !self.stop_flag.load(Ordering::SeqCst) {
             let mut round = Vec::with_capacity(suites.len());
             for suite in suites {

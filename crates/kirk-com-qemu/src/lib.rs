@@ -572,7 +572,7 @@ impl ComChannel for QemuChannel {
                     self.exec(&format!("export {key}={quoted}"), None).await?;
                 if retcode != 0 {
                     return Err(KirkError::Communication(format!(
-                        "Can't setup env {key}={value}: {stdout}"
+                        "Can't setup env {key}: {stdout}"
                     )));
                 }
             }

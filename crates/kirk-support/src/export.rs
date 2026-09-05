@@ -84,7 +84,10 @@ pub fn report_value(results: &[SuiteResults]) -> Value {
     let mut data = Map::new();
     data.insert(String::from("results"), Value::Array(entries));
     data.insert(String::from("stats"), stats_value(results));
-    data.insert(String::from("environment"), environment_value(&results[0]));
+    let environment = results
+        .first()
+        .map_or(Value::Object(Map::new()), environment_value);
+    data.insert(String::from("environment"), environment);
     Value::Object(data)
 }
 
@@ -293,6 +296,13 @@ mod tests {
         let exporter = JSONExporter::new();
         assert!(exporter.save_file(&[], "").await.is_err());
         assert!(exporter.save_file(&fixture(), "").await.is_err());
+    }
+
+    #[test]
+    fn empty_report_value_does_not_panic() {
+        let data = report_value(&[]);
+        assert_eq!(data["results"], serde_json::json!([]));
+        assert_eq!(data["stats"]["passed"], serde_json::json!(0));
     }
 
     #[tokio::test]

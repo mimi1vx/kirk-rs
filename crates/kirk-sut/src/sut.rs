@@ -376,7 +376,7 @@ pub trait Sut: Plugin + Send + Sync {
                     None,
                 )
                 .await?;
-            if result.is_some_and(|output| output.returncode != 0) {
+            if result.is_none_or(|output| output.returncode != 0) {
                 return Ok(false);
             }
         }
@@ -494,13 +494,12 @@ async fn write_fault_value(
     let result = channel
         .run_command(&format!("echo {value} > {path}"), None, None, None)
         .await?;
-    if let Some(output) = result
-        && output.returncode != 0
-    {
-        return Err(KirkError::Sut(format!(
+    match result {
+        Some(output) if output.returncode == 0 => Ok(()),
+        Some(output) => Err(KirkError::Sut(format!(
             "Can't setup {path}. {}",
             output.stdout
-        )));
+        ))),
+        None => Err(KirkError::Sut(format!("Can't setup {path}"))),
     }
-    Ok(())
 }

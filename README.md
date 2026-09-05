@@ -49,7 +49,7 @@ General options:
 - `-d, --tmp-dir <TMP_DIR>`: temporary directory (default `/tmp`).
 - `-r, --restore <RESTORE>`: restore a session from a directory containing an `executed` file.
 - `-o, --json-report <JSON_REPORT>`: write a JSON report to a path that must not exist yet.
-- `-m, --monitor <MONITOR>`: append single-line JSON events to a file whose parent directory must exist.
+- `-m, --monitor <MONITOR>`: write the latest event as a single-line JSON document to a file whose parent directory must exist.
 
 Configuration options:
 
@@ -107,7 +107,7 @@ Timeouts: a per-test expiry records a timeout result; a kernel timeout also trig
 
 ## Sessions, restore, and reports
 
-Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. Every run writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` receives one JSON object per event line. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
+Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. Every run writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` receives the latest event as one JSON object per rewrite. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
 
 ## Exit codes
 

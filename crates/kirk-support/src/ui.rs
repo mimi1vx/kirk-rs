@@ -717,8 +717,8 @@ impl ParallelUi {
                 .styled("kernel panic", Some(ConsoleUi::RED), "\n")
                 .await;
         } else {
-            // Mirroring upstream: the result label itself is not printed here.
-            let _ = (msg, color);
+            self.console.styled(&prefix, None, "").await;
+            self.console.styled(msg, Some(color), "").await;
             if tainted.is_some() {
                 self.console.styled(" | ", None, "").await;
                 self.console
@@ -1039,6 +1039,7 @@ mod tests {
         let out = printer.contents();
         assert!(out.contains("Following tests will run in parallel:"));
         assert!(out.contains("p1 (1/2): "));
+        assert!(out.contains("pass"));
     }
 
     #[tokio::test]

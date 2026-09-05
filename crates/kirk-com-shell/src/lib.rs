@@ -219,7 +219,7 @@ fn split_argv(command: &str) -> Result<Vec<String>, KirkError> {
                     chars.peek(),
                     Some(next)
                         if next.is_alphanumeric()
-                            || matches!(next, '_' | '{' | '(' | '*' | '?' | '#' | '$')
+                            || matches!(next, '_' | '{' | '(' | '*' | '?' | '#' | '$' | '-' | '!' | '@')
                 );
                 if substitution {
                     return Err(shell_syntax());
@@ -657,6 +657,9 @@ mod tests {
     fn split_rejects_substitution_but_keeps_bare_dollar() {
         assert!(split_argv("echo -n $PWD").is_err());
         assert_eq!(split_argv("echo price: $").expect("bare dollar").len(), 3);
+        for command in ["echo $@", "echo $-", "echo $!", "echo $*"] {
+            assert!(split_argv(command).is_err(), "{command} must be rejected");
+        }
     }
 
     #[test]

@@ -44,10 +44,14 @@ pub enum UiKind {
     Simple,
 }
 
-/// Saturating `u64` seconds into the `f64` the session APIs take; real
+/// `u64` seconds into the `f64` the session APIs take; real
 /// timeouts are orders of magnitude below the precision-loss range.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "timeouts are small; u64 seconds fit f64 exactly there"
+)]
 fn secs(value: u64) -> f64 {
-    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+    value as f64
 }
 
 /// Pick the UI from worker count and verbosity.
@@ -116,8 +120,8 @@ pub async fn get_skip_tests(
             .map_err(|_| KirkError::Session(String::from("can't read skip file")))?;
         let kept: Vec<&str> = text
             .lines()
-            .map(str::trim_end)
-            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .collect();
         if !kept.is_empty() {
             parts.push(kept.join("|"));
@@ -548,6 +552,21 @@ mod tests {
             .unwrap();
         assert_eq!(result, "test01|test02|test03");
         assert_eq!(get_skip_tests(None, None).await.unwrap(), "");
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn skip_tests_trims_whitespace() {
+        let dir = std::env::temp_dir().join("kirk-cli-skip-trim");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("skip");
+        tokio::fs::write(&path, "  test01  \n   # indented comment\n\ttest02\t\n")
+            .await
+            .unwrap();
+        let result = get_skip_tests(None, Some(path.to_str().unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(result, "test01|test02");
         tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 
