@@ -115,3 +115,8 @@ Each run appends `suite::test` lines to an `executed` file under the session tem
 - `1`: session failure.
 - `2`: argument or validation error.
 - `130`: interrupted (Ctrl-C).
+
+## License
+
+Licensed under the GNU General Public License v2.0 or later (`GPL-2.0-or-later`).
+See [COPYING](COPYING) for the full text.
