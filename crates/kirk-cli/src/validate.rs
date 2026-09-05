@@ -40,14 +40,6 @@ pub fn validate(
     coms: &[PluginInfo],
     suts: &[PluginInfo],
 ) -> Result<Validation, KirkError> {
-    if let Some(dir) = args.plugins.as_deref()
-        && !is_existing_dir(dir)
-    {
-        return Err(KirkError::Session(format!(
-            "'{dir}' plugins directory doesn't exist"
-        )));
-    }
-
     if args.com.iter().any(|obj| obj.contains_key("help")) {
         return Ok(Validation::ComHelp);
     }
@@ -162,12 +154,16 @@ mod tests {
     use crate::args::Args;
     use clap::Parser;
 
+    /// Statically linked channel names plus the builtin SUT.
     fn plugins() -> (Vec<PluginInfo>, Vec<PluginInfo>) {
         (
-            vec![PluginInfo {
-                name: String::from("shell"),
-                config_help: HashMap::new(),
-            }],
+            ["shell", "ssh", "qemu", "ltx"]
+                .into_iter()
+                .map(|name| PluginInfo {
+                    name: String::from(name),
+                    config_help: HashMap::new(),
+                })
+                .collect(),
             vec![PluginInfo {
                 name: String::from("default"),
                 config_help: HashMap::from([(String::from("com"), String::from("help"))]),
@@ -191,13 +187,6 @@ mod tests {
     fn pattern_without_suite_fails() {
         let (coms, suts) = plugins();
         assert!(validate(&parse(&["--run-pattern", "test.*"]), &coms, &suts).is_err());
-    }
-
-    #[test]
-    fn invalid_plugins_dir_fails() {
-        let (coms, suts) = plugins();
-        let args = parse(&["--plugins", "/nonexistent", "--sut", "help"]);
-        assert!(validate(&args, &coms, &suts).is_err());
     }
 
     #[test]
@@ -281,6 +270,18 @@ mod tests {
             validate(&parse(&["--run-command", "ls"]), &coms, &suts),
             Ok(Validation::Proceed)
         ));
+    }
+
+    #[test]
+    fn builtin_channels_validate() {
+        let (coms, suts) = plugins();
+        for name in ["shell", "ssh", "qemu", "ltx"] {
+            let args = parse(&["--com", name, "--run-command", "ls"]);
+            assert!(
+                matches!(validate(&args, &coms, &suts), Ok(Validation::Proceed)),
+                "{name} must validate"
+            );
+        }
     }
 
     #[test]

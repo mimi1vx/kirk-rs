@@ -1,23 +1,12 @@
 //! Registry and `ensure_communicate` parity with `test_com.py`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use kirk_com::{CmdResult, ComChannel, IOBuffer, Registry};
 use kirk_core::KirkError;
 use kirk_plugin::Plugin;
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn temp_dir(name: &str) -> PathBuf {
-    let id = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("kirk-com-{name}-{}-{id}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir
-}
 
 struct Printer;
 
@@ -200,53 +189,14 @@ async fn ensure_communicate_exhausts_retries() {
 }
 
 #[test]
-fn discover_empty_dir_loads_nothing() {
-    let dir = temp_dir("empty");
-    let mut registry = Registry::new();
-
-    registry.discover(&dir, false).expect("empty dir is fine");
-
-    assert!(registry.get_channels().is_empty());
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn discover_missing_dir_errors() {
-    let mut registry = Registry::new();
-    let missing = temp_dir("missing-parent").join("no-such-dir");
-
-    let err = registry
-        .discover(&missing, false)
-        .expect_err("missing dir must error");
-    assert!(matches!(err, KirkError::Plugin(_)));
-}
-
-#[test]
-fn discover_skips_non_plugin_files() {
-    let dir = temp_dir("nonplugin");
-    std::fs::write(dir.join("notes.txt"), "not a plugin").expect("write txt");
-    // Garbage bytes with a dylib extension: loader fails, registry skips.
-    std::fs::write(dir.join("bogus.so"), b"definitely not an ELF image").expect("write bogus so");
-
-    let mut registry = Registry::new();
-    registry.discover(&dir, false).expect("graceful skip");
-
-    assert!(registry.get_channels().is_empty());
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn register_sorts_after_discover_and_clones() {
-    let dir = temp_dir("sort");
+fn register_and_clones() {
     let mut registry = Registry::new();
     let mut second = FakeChannel::new("b-chan");
     second.parallel = true;
     registry.register(Box::new(second));
     registry.register(Box::new(FakeChannel::new("a-chan")));
 
-    // Discover over the empty dir re-sorts without adding anything.
-    registry.discover(&dir, true).expect("discover sorts");
-    assert_eq!(registry.names(), vec!["a-chan", "b-chan"]);
+    assert_eq!(registry.names(), vec!["b-chan", "a-chan"]);
 
     registry
         .clone_channel("a-chan", "newchan")
@@ -257,6 +207,4 @@ fn register_sorts_after_discover_and_clones() {
         .clone_channel("missing", "other")
         .expect_err("unknown channel must error");
     assert!(matches!(err, KirkError::Plugin(_)));
-
-    std::fs::remove_dir_all(&dir).ok();
 }

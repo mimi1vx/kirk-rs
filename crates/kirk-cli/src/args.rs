@@ -158,10 +158,6 @@ pub struct Args {
     #[arg(short = 'm', long, help_heading = "General options")]
     pub monitor: Option<String>,
 
-    /// Location of custom plugins.
-    #[arg(short = 'P', long, help_heading = "General options")]
-    pub plugins: Option<String>,
-
     /// Communication channel parameters. For help please use '--com help'.
     #[arg(short = 'C', long, value_parser = parse_dict_config, help_heading = "Configuration options")]
     pub com: Vec<HashMap<String, String>>,
@@ -383,8 +379,6 @@ mod tests {
             "-o",
             "--monitor",
             "-m",
-            "--plugins",
-            "-P",
             "--verbose",
             "-v",
             "--no-colors",

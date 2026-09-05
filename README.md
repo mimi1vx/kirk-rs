@@ -9,11 +9,11 @@ Kirk is an all-in-one Linux testing framework. This repository is a Rust workspa
 | `kirk-cli` | `kirk` binary: argument parsing, validation, session wiring |
 | `kirk-core` | Shared `Test`/`Suite` types, result counters, error enum |
 | `kirk-plugin` | Minimal `Plugin` trait (setup, config help, boxed clone) |
-| `kirk-com` | `ComChannel` trait plus `libloading`-based channel registry |
+| `kirk-com` | `ComChannel` trait plus the in-process channel registry |
 | `kirk-com-shell` | Local process execution channel |
-| `kirk-com-ssh` | SSH execution channel library |
-| `kirk-com-qemu` | QEMU guest-serial execution channel library |
-| `kirk-com-ltx` | LTX msgpack-over-FIFO execution channel library |
+| `kirk-com-ssh` | SSH execution channel |
+| `kirk-com-qemu` | QEMU guest-serial execution channel |
+| `kirk-com-ltx` | LTX msgpack-over-FIFO execution channel |
 | `kirk-sut` | SUT abstraction with host probes, taint tracking, fault injection |
 | `kirk-ltp` | LTP framework: runtest parsing, suite discovery, result parsing |
 | `kirk-scheduler` | Test and suite schedulers (parallelism, timeouts, retries) |
@@ -50,7 +50,6 @@ General options:
 - `-r, --restore <RESTORE>`: restore a session from a directory containing an `executed` file.
 - `-o, --json-report <JSON_REPORT>`: write a JSON report to a path that must not exist yet.
 - `-m, --monitor <MONITOR>`: append single-line JSON events to a file whose parent directory must exist.
-- `-P, --plugins <PLUGINS>`: directory of external `*.so`/`*.dylib`/`*.dll` channel plugins exporting `kirk_plugin`.
 
 Configuration options:
 
@@ -78,6 +77,8 @@ Execution options:
 
 ## Channels and SUTs
 
+All channels are statically linked into the `kirk` binary. (Dynamic channel plugins were tried and removed: every channel needs the tokio reactor, and a dylib links its own tokio copy whose runtime-context thread-locals cannot see the host runtime. Sharing one tokio would require a dylib-shim build for the whole workspace.)
+
 `--com help` reports the channels wired into the CLI:
 
 ```text
@@ -86,7 +87,7 @@ Execution options:
 	<name>:<param1>=<value1>:<param2>=<value2>:..
 ```
 
-The `shell` channel runs commands locally and takes no configuration. `kirk-com-ssh`, `kirk-com-qemu`, and `kirk-com-ltx` are libraries in this workspace and are not wired into the CLI channel setup.
+The `shell` channel runs commands locally and takes no configuration. The `ssh`, `qemu`, and `ltx` channels take per-channel parameters; see each channel's `config_help` via `--com help`.
 
 `--sut help` reports the SUTs wired into the CLI. The `default` SUT takes one key:
 

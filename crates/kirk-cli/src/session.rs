@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kirk_com::{CmdResult, ComChannel, Registry};
+use kirk_com_ltx::LtxChannel;
+use kirk_com_qemu::QemuChannel;
 use kirk_com_shell::ShellChannel;
+use kirk_com_ssh::SshChannel;
 use kirk_core::KirkError;
 use kirk_events::EventRegistry;
 use kirk_ltp::{Framework as LtpFrameworkTrait, LtpFramework};
@@ -63,18 +66,38 @@ pub fn select_ui(workers: usize, verbose: bool) -> UiKind {
     }
 }
 
-/// Builtin plugins: the `shell` channel and the `default` SUT.
+/// Builtin plugins: the statically linked channels and the `default` SUT.
 #[must_use]
 pub fn builtin_plugins() -> (Vec<PluginInfo>, Vec<PluginInfo>) {
-    let coms = vec![PluginInfo {
-        name: String::from("shell"),
-        config_help: ShellChannel::new().config_help(),
-    }];
+    let coms = [
+        Box::new(ShellChannel::new()) as Box<dyn ComChannel>,
+        Box::new(SshChannel::new("ssh")),
+        Box::new(QemuChannel::new()),
+        Box::new(LtxChannel::new()),
+    ]
+    .into_iter()
+    .map(|channel| PluginInfo {
+        name: channel.name().to_owned(),
+        config_help: channel.config_help(),
+    })
+    .collect();
     let suts = vec![PluginInfo {
         name: String::from("default"),
         config_help: GenericSut::new().config_help(),
     }];
     (coms, suts)
+}
+
+/// Build a fresh template of the statically linked channel `name`.
+fn builtin_template(name: &str, id: &str) -> Option<Box<dyn ComChannel>> {
+    let template: Box<dyn ComChannel> = match name {
+        "shell" => Box::new(ShellChannel::new()),
+        "ssh" => Box::new(SshChannel::new("ssh")),
+        "qemu" => Box::new(QemuChannel::new()),
+        "ltx" => Box::new(LtxChannel::new()),
+        _ => return None,
+    };
+    Some(template.clone_channel_box(id))
 }
 
 /// Combine `--skip-tests` with `--skip-file`, mirroring `_get_skip_tests`.
@@ -125,8 +148,10 @@ pub fn resolve_restore(path: Option<&str>) -> Result<Option<String>, KirkError> 
 
 /// Build one live channel per `--com` entry, mirroring `_init_channels`.
 ///
-/// Entries with `id=` clone the named template under the new id. With no
-/// entries, one default `shell` instance is returned so the SUT can attach.
+/// Entries with `id=` clone the named template under the new id; templates
+/// resolve from already-built instances first, then the statically linked
+/// channels. With no entries, one default `shell` instance is returned so
+/// the SUT can attach.
 ///
 /// # Errors
 ///
@@ -136,32 +161,41 @@ fn setup_channels(
     configs: &[HashMap<String, String>],
     tmpdir: &str,
 ) -> Result<Vec<Box<dyn ComChannel>>, KirkError> {
+    if configs.is_empty() {
+        let mut shell = builtin_template("shell", "shell")
+            .ok_or_else(|| KirkError::Plugin(String::from("Can't find plugin 'shell'")))?;
+        shell.setup(&HashMap::from([(
+            String::from("tmpdir"),
+            tmpdir.to_owned(),
+        )]))?;
+        return Ok(vec![shell]);
+    }
     let mut instances: Vec<Box<dyn ComChannel>> = Vec::new();
     for config in configs {
         let name = config.get("name").map_or("", String::as_str);
         let id = config.get("id").map_or(name, String::as_str);
-        let template: Box<dyn ComChannel> = if name == "shell" {
-            Box::new(ShellChannel::new())
-        } else if let Some(found) = instances.iter().find(|channel| channel.name() == name) {
-            found.clone_channel_box(id)
-        } else {
-            return Err(KirkError::Plugin(format!("Can't find plugin '{name}'")));
-        };
+        let template = lookup_template(name, id, &instances)?;
         let mut instance = template.clone_channel_box(id);
         let mut full = config.clone();
         full.insert(String::from("tmpdir"), tmpdir.to_owned());
         instance.setup(&full)?;
         instances.push(instance);
     }
-    if instances.is_empty() {
-        let mut shell: Box<dyn ComChannel> = Box::new(ShellChannel::new());
-        shell.setup(&HashMap::from([(
-            String::from("tmpdir"),
-            tmpdir.to_owned(),
-        )]))?;
-        instances.push(shell);
-    }
     Ok(instances)
+}
+
+/// Clone the `name` template under `id`, preferring an already-built
+/// instance (for `id=` chaining) over the statically linked channels.
+fn lookup_template(
+    name: &str,
+    id: &str,
+    instances: &[Box<dyn ComChannel>],
+) -> Result<Box<dyn ComChannel>, KirkError> {
+    if let Some(found) = instances.iter().find(|channel| channel.name() == name) {
+        return Ok(found.clone_channel_box(id));
+    }
+    builtin_template(name, id)
+        .ok_or_else(|| KirkError::Plugin(format!("Can't find plugin '{name}'")))
 }
 
 /// [`GenericSut`] adapted to the scheduler [`Sut`](SchedSut) surface.
@@ -493,7 +527,7 @@ mod tests {
         let (coms, suts) = builtin_plugins();
         assert_eq!(
             coms.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            ["shell"]
+            ["shell", "ssh", "qemu", "ltx"]
         );
         assert_eq!(
             suts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
@@ -566,6 +600,20 @@ mod tests {
         assert_eq!(instances[0].name(), "myshell");
     }
 
+    #[test]
+    fn all_builtin_templates_resolve() {
+        for name in ["shell", "ssh", "qemu", "ltx"] {
+            let template = lookup_template(name, name, &[]).unwrap();
+            assert_eq!(template.name(), name);
+        }
+    }
+
+    #[test]
+    fn channels_missing_template_errors() {
+        let cfg = HashMap::from([(String::from("name"), String::from("nonexistent"))]);
+        assert!(setup_channels(&[cfg], "/tmp").is_err());
+    }
+
     #[tokio::test]
     async fn dry_run_command_needs_no_ltp_root() {
         let (coms, suts) = builtin_plugins();
@@ -578,7 +626,6 @@ mod tests {
             restore: None,
             json_report: None,
             monitor: None,
-            plugins: None,
             com: Vec::new(),
             sut: HashMap::from([(String::from("name"), String::from("default"))]),
             skip_tests: None,

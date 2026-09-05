@@ -17,7 +17,10 @@ clap.workspace = true
 regex.workspace = true
 tokio.workspace = true
 kirk-com = { path = "../kirk-com" }
+kirk-com-ltx = { path = "../kirk-com-ltx" }
+kirk-com-qemu = { path = "../kirk-com-qemu" }
 kirk-com-shell = { path = "../kirk-com-shell" }
+kirk-com-ssh = { path = "../kirk-com-ssh" }
 kirk-core = { path = "../kirk-core" }
 kirk-events = { path = "../kirk-events" }
 kirk-ltp = { path = "../kirk-ltp" }

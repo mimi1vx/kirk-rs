@@ -10,5 +10,4 @@ workspace = true
 async-trait.workspace = true
 kirk-core = { path = "../kirk-core" }
 kirk-plugin = { path = "../kirk-plugin" }
-libloading.workspace = true
 tokio.workspace = true
