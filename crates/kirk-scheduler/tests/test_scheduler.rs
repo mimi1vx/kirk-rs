@@ -67,7 +67,7 @@ async fn sequential_mode_preserves_order() {
 async fn max_workers_bounds_concurrency() {
     let sut = FakeSut::new();
     let sched = scheduler(sut.clone(), 3600.0, 3);
-    let tests: Vec<Test> = (0..9).map(|index| sleep_test(index, "0.2")).collect();
+    let tests: Vec<Test> = (0..9).map(|index| sleep_test(index, "0.02")).collect();
 
     sched.schedule(&tests).await.expect("schedule succeeds");
 
@@ -90,12 +90,12 @@ async fn single_worker_runs_one_at_a_time() {
 async fn schedule_stop_cuts_execution_short() {
     for workers in [1, 10] {
         let count = workers * 2;
-        let tests: Vec<Test> = (0..count).map(|index| sleep_test(index, "1.0")).collect();
+        let tests: Vec<Test> = (0..count).map(|index| sleep_test(index, "0.1")).collect();
         let sut = FakeSut::new();
         let sched = scheduler(sut.clone(), 3600.0, workers);
 
         tokio::join!(sched.schedule(&tests), async {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
             sched.stop().await;
         })
         .0
@@ -180,8 +180,8 @@ async fn schedule_drains_parallel_tasks_on_kernel_panic() {
 #[tokio::test]
 async fn schedule_raises_on_kernel_timeout() {
     for workers in [1, 10] {
-        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.1")).collect();
-        let sched = scheduler(FakeSut::hanging(), 0.05, workers);
+        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.01")).collect();
+        let sched = scheduler(FakeSut::hanging(), 0.02, workers);
 
         let error = sched.schedule(&tests).await.unwrap_err();
 
@@ -192,8 +192,8 @@ async fn schedule_raises_on_kernel_timeout() {
 #[tokio::test]
 async fn schedule_records_test_timeout_without_raising() {
     for workers in [1, 10] {
-        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.5")).collect();
-        let sched = scheduler(FakeSut::new(), 0.05, workers);
+        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.05")).collect();
+        let sched = scheduler(FakeSut::new(), 0.02, workers);
 
         sched.schedule(&tests).await.expect("schedule succeeds");
 

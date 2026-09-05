@@ -193,7 +193,7 @@ async fn ordered_handlers_run_serially_in_registration_order() {
     let order: Arc<tokio::sync::Mutex<Vec<usize>>> = Arc::default();
 
     // Decreasing delays: only serial execution completes in order.
-    for (index, delay_ms) in [(0_usize, 50_u64), (1, 20), (2, 5)] {
+    for (index, delay_ms) in [(0_usize, 10_u64), (1, 5), (2, 1)] {
         let sink = Arc::clone(&order);
         let handler: Handler = Arc::new(move |_: EventArgs| -> BoxFuture<HandlerResult> {
             let sink = Arc::clone(&sink);

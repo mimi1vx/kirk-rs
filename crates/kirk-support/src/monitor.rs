@@ -580,7 +580,7 @@ mod tests {
         let worker = registry.clone();
         let handle = tokio::spawn(async move { worker.start().await });
         registry.fire("kernel_panic", None).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         registry.stop();
         handle.await.unwrap();
         let data = read_line(&path).await;

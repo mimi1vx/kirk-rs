@@ -227,8 +227,8 @@ async fn run_command_stop_during_sleep() {
     let mut runner = channel.clone();
     let mut stopper = channel.clone();
 
-    let run = tokio::spawn(async move { runner.run_command("sleep 2", None, None, None).await });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let run = tokio::spawn(async move { runner.run_command("sleep 0.5", None, None, None).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     stopper.stop(None).await.expect("stop");
 
     let res = run
@@ -237,7 +237,7 @@ async fn run_command_stop_during_sleep() {
         .expect("killed run")
         .expect("killed result");
     assert_ne!(res.returncode, 0);
-    assert!(res.exec_time < 2.0, "exec_time: {}", res.exec_time);
+    assert!(res.exec_time < 0.5, "exec_time: {}", res.exec_time);
     assert!(!channel.active().await);
 }
 
@@ -277,11 +277,11 @@ async fn run_command_stop_parallel_sleeps() {
     for _ in 0..4 {
         let mut runner = channel.clone();
         tasks.push(tokio::spawn(async move {
-            runner.run_command("sleep 2", None, None, None).await
+            runner.run_command("sleep 0.5", None, None, None).await
         }));
     }
     let mut stopper = channel.clone();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     stopper.stop(None).await.expect("stop");
 
     for task in tasks {
@@ -289,7 +289,7 @@ async fn run_command_stop_parallel_sleeps() {
         match outcome {
             Ok(Some(res)) => {
                 assert_ne!(res.returncode, 0);
-                assert!(res.exec_time < 2.0);
+                assert!(res.exec_time < 0.5);
             }
             Err(KirkError::Communication(_)) => {}
             other => panic!("unexpected parallel-stop outcome: {other:?}"),

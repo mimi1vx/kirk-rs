@@ -405,7 +405,7 @@ async fn get_info_optimized_falls_back_without_parallel_channel() {
 async fn run_cmd_unknown_on_timeout_and_failure() {
     let (mut sut, state) = sut_with_shell(false);
     state.set_response("uname -s -r -v", 0, "Linux 6.1.0\n");
-    state.set_response_delayed("cat /proc/meminfo", 0, "MemTotal: 1 kB\n", 5_000);
+    state.set_response_delayed("cat /proc/meminfo", 0, "MemTotal: 1 kB\n", 1_600);
     state.set_response("uname -m", 1, "boom\n");
 
     sut.start(None).await.expect("start");

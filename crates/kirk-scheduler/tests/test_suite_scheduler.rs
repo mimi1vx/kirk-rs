@@ -51,7 +51,7 @@ async fn schedule_runs_all_suites() {
 async fn max_workers_bounds_concurrency() {
     let sut = FakeSut::new();
     let sched = scheduler(sut.clone(), 3600.0, 3600.0, 3);
-    let tests: Vec<Test> = (0..9).map(|index| sleep_test(index, "0.2")).collect();
+    let tests: Vec<Test> = (0..9).map(|index| sleep_test(index, "0.02")).collect();
     let suites = [suite("suite01", tests)];
 
     sched.schedule(&suites).await.expect("schedule succeeds");
@@ -73,13 +73,13 @@ async fn schedule_rejects_empty_jobs() {
 async fn schedule_stop_cuts_execution_short() {
     for workers in [1, 10] {
         let count = workers * 2;
-        let tests: Vec<Test> = (0..count).map(|index| sleep_test(index, "1.0")).collect();
+        let tests: Vec<Test> = (0..count).map(|index| sleep_test(index, "0.1")).collect();
         let sut = FakeSut::new();
         let sched = scheduler(sut.clone(), 3600.0, 3600.0, workers);
         let suites = [suite("suite01", tests)];
 
         tokio::join!(sched.schedule(&suites), async {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
             sched.stop().await;
         })
         .0
@@ -159,9 +159,9 @@ async fn schedule_reboots_on_kernel_panic() {
 #[tokio::test]
 async fn schedule_reboots_on_kernel_timeout() {
     for workers in [1, 10] {
-        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.1")).collect();
+        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.01")).collect();
         let sut = FakeSut::hanging();
-        let sched = scheduler(sut.clone(), 3600.0, 0.05, workers);
+        let sched = scheduler(sut.clone(), 3600.0, 0.02, workers);
 
         sched
             .schedule(&[suite("suite01", tests)])
@@ -178,8 +178,10 @@ async fn schedule_reboots_on_kernel_timeout() {
 #[tokio::test]
 async fn schedule_marks_leftover_tests_on_suite_timeout() {
     for workers in [1, 10] {
-        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.5")).collect();
-        let sched = scheduler(FakeSut::new(), 0.1, 3600.0, workers);
+        let tests: Vec<Test> = (0..10).map(|index| sleep_test(index, "0.05")).collect();
+        // Suite timeout 0.02 keeps a 2.5x margin under the 0.05 sleep batch
+        // so the 10-worker leg still times out instead of racing it.
+        let sched = scheduler(FakeSut::new(), 0.02, 3600.0, workers);
 
         sched
             .schedule(&[suite("suite01", tests)])

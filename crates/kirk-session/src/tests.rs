@@ -34,7 +34,7 @@ impl FakeSut {
 
     async fn exec(&self, command: &str) -> Option<CmdResult> {
         if command.contains("sleep") {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         } else {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
@@ -375,7 +375,7 @@ async fn run_stop_during_sleep() {
             })
             .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     session.stop().await;
     session.stop().await;
     let _ = run.await.unwrap();
