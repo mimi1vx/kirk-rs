@@ -388,9 +388,14 @@ impl ComChannel for ShellChannel {
         for pid in &pids {
             kill_process_group(*pid);
         }
-        for pid in &pids {
-            wait_for_exit(*pid).await;
+        // Wait concurrently: each wait can block up to 5s on an unreaped
+        // zombie owned by its `run_command`, so sequential waits would
+        // multiply the bound per pid.
+        let mut waits = tokio::task::JoinSet::new();
+        for pid in pids {
+            waits.spawn(wait_for_exit(pid));
         }
+        while waits.join_next().await.is_some() {}
         {
             let _guard = self.inner.fetch_lock.lock().await;
         }

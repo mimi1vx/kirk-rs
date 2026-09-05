@@ -30,6 +30,7 @@ jobs:
   clippy:
     name: clippy (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +49,7 @@ jobs:
   build:
     name: build (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -63,21 +65,21 @@ jobs:
         run: cargo build --workspace --all-targets
 
   test:
-    name: test (${{ matrix.toolchain }})
+    name: test (stable)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain: [stable, beta]
-    continue-on-error: ${{ matrix.toolchain == 'beta' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
       - uses: Swatinem/rust-cache@v2
+      - name: List tests
+        run: cargo test --workspace -- --list
       - name: Test
-        run: cargo test --workspace
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --workspace --verbose -- --nocapture --test-threads=4
 
   doc:
     name: doc (stable)

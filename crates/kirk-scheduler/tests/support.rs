@@ -19,8 +19,10 @@ use kirk_core::results::{ResultStatus, TestResults};
 use kirk_scheduler::{Framework, StdoutBuffer, Sut};
 
 /// Shell operators are out of scope for the fake; commands are `echo ...`,
-/// `sleep <secs>`, `id -u`, or contain `Kernel panic`.
-const HANG_SECS: u64 = 3600;
+/// `sleep <secs>`, `id -u`, or contain `Kernel panic`. Kept small (but still
+/// ~1500x the 0.02s test timeout) so a missed timeout arm hangs CI for
+/// seconds, not an hour.
+const HANG_SECS: u64 = 30;
 
 #[derive(Debug, Default)]
 struct FakeState {

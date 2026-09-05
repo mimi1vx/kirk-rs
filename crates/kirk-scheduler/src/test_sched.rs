@@ -39,8 +39,10 @@ use tokio::time::timeout;
 
 use crate::scheduler::Scheduler;
 
-/// Delay before probing the SUT after a test timeout (mirrors the 10s `ping` arm).
-const PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// Delay before probing the SUT after a test timeout (mirrors the `ping`
+/// arm; kept at 2s so a wedged ping bounds the kill path instead of
+/// stalling the suite).
+const PING_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Synthesized return code for kernel failures (mirrors `-signal.SIGKILL` skip logic).
 const KILLED_RETURNCODE: i32 = -9;
