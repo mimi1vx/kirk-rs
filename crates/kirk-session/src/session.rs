@@ -602,7 +602,7 @@ where
             suites = Self::apply_iterate(suites, opts.suite_iterate);
             if opts.randomize {
                 use rand::seq::SliceRandom;
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 for suite in &mut *suites {
                     let mut tests = suite.tests().to_vec();
                     tests.shuffle(&mut rng);

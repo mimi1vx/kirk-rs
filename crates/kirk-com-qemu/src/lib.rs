@@ -39,13 +39,13 @@ const POWER_OFF_TIMEOUT: Duration = Duration::from_secs(30);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Random `echo` marker, drawn from OS-seeded randomness
-/// (`thread_rng`, seeded by the OS entropy source) so concurrent sessions
+/// (`rand::rng`, seeded by the OS entropy source) so concurrent sessions
 /// cannot collide on the same marker.
 fn generate_code() -> String {
-    use rand::Rng as _;
-    let mut rng = rand::thread_rng();
+    use rand::{RngExt as _, distr::Alphanumeric};
+    let mut rng = rand::rng();
     (0..10)
-        .map(|_| char::from(rng.sample(rand::distributions::Alphanumeric)))
+        .map(|_| char::from(rng.sample(Alphanumeric)))
         .collect()
 }
 
