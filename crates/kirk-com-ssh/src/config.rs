@@ -533,6 +533,6 @@ mod tests {
             ["echo", "a b", "c d"]
         );
         assert!(split_argv("echo 'oops").is_err());
-        assert!(split_argv("").unwrap().is_empty());
+        assert_eq!(split_argv("").unwrap(), [] as [String; 0]);
     }
 }

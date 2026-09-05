@@ -89,7 +89,7 @@ async fn schedule_stop_cuts_execution_short() {
         assert_eq!(sut.stops(), 0);
         let results = sched.results().await;
         assert_eq!(results.len(), 1);
-        assert!(!results[0].tests_results().is_empty());
+        assert_ne!(results[0].tests_results(), []);
     }
 }
 

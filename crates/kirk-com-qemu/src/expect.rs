@@ -403,7 +403,7 @@ mod tests {
         )
         .await
         .expect("cancel aborts without error");
-        assert!(out.is_empty());
+        assert_eq!(out, "");
     }
 
     #[test]

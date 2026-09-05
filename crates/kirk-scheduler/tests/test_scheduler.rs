@@ -117,7 +117,10 @@ async fn schedule_raises_on_kernel_tainted() {
         let error = sched.schedule(&tests).await.unwrap_err();
 
         assert!(matches!(error, KirkError::KernelTainted(_)));
-        assert!(!sched.results().await.is_empty());
+        assert_ne!(
+            sched.results().await,
+            [] as [kirk_core::results::TestResults; 0]
+        );
     }
 }
 
