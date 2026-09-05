@@ -126,7 +126,7 @@ async fn live_run_and_fetch() {
         .fetch_file(&fetch_path)
         .await
         .expect("fetch must succeed");
-    assert!(!data.is_empty());
+    assert_ne!(data, [] as [u8; 0]);
 
     channel.stop(None).await.expect("stop must succeed");
 }

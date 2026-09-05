@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(data.len(), 16);
         assert_eq!(pos, 16);
         let (rest, pos) = read_transport(&path_str, 16).expect("read at end");
-        assert!(rest.is_empty());
+        assert_eq!(rest, [] as [u8; 0]);
         assert_eq!(pos, 16);
         std::fs::remove_file(&path).ok();
     }

@@ -173,7 +173,7 @@ mod tests {
             split_cmd_args("test.sh ciao bepi"),
             vec!["test.sh", "ciao", "bepi"]
         );
-        assert!(split_cmd_args("   ").is_empty());
+        assert_eq!(split_cmd_args("   "), [] as [String; 0]);
     }
 
     #[test]
