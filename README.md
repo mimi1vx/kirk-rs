@@ -48,7 +48,7 @@ General options:
 - `-n, --no-colors`: disable colors.
 - `-d, --tmp-dir <TMP_DIR>`: temporary directory (default `/tmp`).
 - `-r, --restore <RESTORE>`: restore a session from a directory containing an `executed` file.
-- `-o, --json-report <JSON_REPORT>`: write a JSON report to a path that must not exist yet.
+- `-o, --json-report <JSON_REPORT>`: write a JSON report to a path that must not exist yet and whose parent directory must exist.
 - `-m, --monitor <MONITOR>`: write the latest event as a single-line JSON document to a file whose parent directory must exist.
 
 Configuration options:
@@ -66,7 +66,7 @@ Execution options:
 - `-T, --suite-timeout <SUITE_TIMEOUT>`: per-suite timeout (default `1h`).
 - `-t, --exec-timeout <EXEC_TIMEOUT>`: per-execution timeout (default `1h`). Durations accept `30s`, `4m`, `5h`, `20d`; a bare number means seconds.
 - `-R, --randomize`: randomize test execution order.
-- `-I, --runtime <RUNTIME>`: session runtime in seconds (default `0`, meaning run once).
+- `-I, --runtime <RUNTIME>`: session runtime (default `0`, meaning run once). Accepts the same duration format as the timeouts.
 - `-i, --suite-iterate <SUITE_ITERATE>`: repeat suites N times (default `1`); repeats are named `suite[i]`.
 - `-w, --workers <WORKERS>`: parallel workers (default `1`).
 - `-W, --force-parallel`: force parallel execution of all tests.
@@ -103,11 +103,11 @@ At least one of `--run-suite` or `--run-command` is required. `--run-pattern` fi
 
 Non-parallelizable tests always run sequentially; parallelizable tests run on up to `--workers` concurrent slots. `--force-parallel` runs everything concurrently. `--workers 1` runs everything sequentially.
 
-Timeouts: a per-test expiry records a timeout result; a kernel timeout also triggers SUT restart handling. A per-suite expiry marks leftover tests as `CONF` and emits a suite-timeout event.
+Timeouts: a per-test expiry records a timeout result; a kernel timeout also triggers SUT restart handling. A per-suite expiry marks leftover tests as `CONF` and emits a `suite_timeout` event.
 
 ## Sessions, restore, and reports
 
-Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. Every run writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` receives the latest event as one JSON object per rewrite. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
+Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. When tests execute, the session writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` receives the latest event as one JSON object per rewrite. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
 
 ## Exit codes
 

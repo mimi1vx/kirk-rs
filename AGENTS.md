@@ -20,7 +20,7 @@ cargo clippy --all-targets     # workspace sets clippy `all = "deny"`, `pedantic
 cargo fmt --check
 ```
 
-No CI workflows, rust-toolchain file, or `.cargo/config.toml` in repo; default `cargo` behavior applies.
+CI runs fmt, clippy, build, test, doc, and audit via `.github/workflows/ci.yml`; Dependabot tracks cargo and GitHub Actions. No rust-toolchain file or `.cargo/config.toml` in repo; default `cargo` behavior applies.
 
 ## Testing quirks
 
