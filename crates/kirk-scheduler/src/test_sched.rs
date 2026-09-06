@@ -37,8 +37,6 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-use crate::scheduler::Scheduler;
-
 /// Delay before probing the SUT after a test timeout (mirrors the `ping`
 /// arm; kept at 2s so a wedged ping bounds the kill path instead of
 /// stalling the suite).
@@ -49,7 +47,7 @@ const KILLED_RETURNCODE: i32 = -9;
 
 /// Status codes returned by test execution in the scheduler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestStatus {
+pub(crate) enum TestStatus {
     /// Test completed without kernel interference.
     Ok,
     /// Test exceeded its execution timeout but the SUT still replies.
@@ -79,7 +77,7 @@ impl StdoutBuffer {
 
     /// Current captured contents.
     #[must_use]
-    pub async fn snapshot(&self) -> String {
+    async fn snapshot(&self) -> String {
         self.inner.lock().await.clone()
     }
 }
@@ -240,13 +238,6 @@ where
         }
     }
 
-    /// Use `events` instead of the default empty registry.
-    #[must_use]
-    pub fn with_events(mut self, events: EventRegistry) -> Self {
-        self.events = events;
-        self
-    }
-
     /// Execution timeout in seconds (`0.0` means disabled).
     #[must_use]
     pub fn test_timeout(&self) -> f64 {
@@ -273,7 +264,7 @@ where
 
     /// Borrow the event registry.
     #[must_use]
-    pub fn events(&self) -> &EventRegistry {
+    pub(crate) fn events(&self) -> &EventRegistry {
         &self.events
     }
 
@@ -651,32 +642,6 @@ where
             .run_command(&cmd, None, &HashMap::new(), &probe)
             .await,
     );
-}
-
-#[async_trait]
-impl<S, F> Scheduler for TestScheduler<S, F>
-where
-    S: Sut + 'static,
-    F: Framework + 'static,
-{
-    type Job = Test;
-    type Output = TestResults;
-
-    async fn results(&self) -> Vec<Self::Output> {
-        TestScheduler::results(self).await
-    }
-
-    fn stopped(&self) -> bool {
-        TestScheduler::stopped(self)
-    }
-
-    async fn stop(&self) {
-        TestScheduler::stop(self).await;
-    }
-
-    async fn schedule(&self, jobs: &[Self::Job]) -> Result<(), KirkError> {
-        TestScheduler::schedule(self, jobs).await
-    }
 }
 
 #[cfg(test)]

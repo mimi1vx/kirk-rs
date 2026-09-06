@@ -5,7 +5,7 @@
 //! never opened is inert: reads return `None`, writes and seeks are no-ops,
 //! and `close` is idempotent.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use kirk_core::KirkError;
 use tokio::fs::{File, OpenOptions};
@@ -33,18 +33,6 @@ impl AsyncFile {
             readable: mode.contains('r') || mode.contains('+'),
             handle: None,
         }
-    }
-
-    /// Path of the file.
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Whether the file is currently open.
-    #[must_use]
-    pub fn is_open(&self) -> bool {
-        self.handle.is_some()
     }
 
     /// Open the file. A second call while open is a no-op.
@@ -166,7 +154,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the read fails.
-    pub async fn readline(&mut self) -> Result<Option<String>, KirkError> {
+    async fn readline(&mut self) -> Result<Option<String>, KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             let mut line = String::new();
             handle
@@ -215,7 +203,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the write fails.
-    pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), KirkError> {
+    async fn write_bytes(&mut self, data: &[u8]) -> Result<(), KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             handle
                 .write_all(data)

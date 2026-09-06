@@ -23,7 +23,6 @@ use kirk_core::results::{ResultStatus, SuiteResults, TestResults};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::scheduler::Scheduler;
 use crate::test_sched::{Framework, Sut, TestScheduler};
 
 /// Suite-level state accumulated across (re)scheduled rounds.
@@ -290,32 +289,6 @@ fn apply_info(
         completed = completed.with_ram(value);
     }
     completed
-}
-
-#[async_trait::async_trait]
-impl<S, F> Scheduler for SuiteScheduler<S, F>
-where
-    S: Sut + 'static,
-    F: Framework + 'static,
-{
-    type Job = Suite;
-    type Output = SuiteResults;
-
-    async fn results(&self) -> Vec<Self::Output> {
-        SuiteScheduler::results(self).await
-    }
-
-    fn stopped(&self) -> bool {
-        SuiteScheduler::stopped(self)
-    }
-
-    async fn stop(&self) {
-        SuiteScheduler::stop(self).await;
-    }
-
-    async fn schedule(&self, jobs: &[Self::Job]) -> Result<(), KirkError> {
-        SuiteScheduler::schedule(self, jobs).await
-    }
 }
 
 #[cfg(test)]

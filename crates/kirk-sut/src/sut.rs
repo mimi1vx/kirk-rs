@@ -3,7 +3,7 @@
 //! [`Sut`] mirrors the Python `SUT` plugin base: probe helpers with a 1.5s
 //! timeout collapsing to `"unknown"`, [`Sut::get_info`] (sequential, or a
 //! [`JoinSet`] gather when [`Sut::optimize`] is set),
-//! taint parsing over [`TAINTED_MSG`], and fault-injection helpers over
+//! taint parsing over `TAINTED_MSG`, and fault-injection helpers over
 //! [`FAULT_INJECTION_FILES`]. [`GenericSut`](crate::GenericSut) wires these
 //! defaults to a concrete channel.
 //!
@@ -43,11 +43,11 @@ const UNKNOWN: &str = "unknown";
 const RUN_CMD_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Retries for [`ComChannel::ensure_communicate`], mirroring the Python default.
-pub(crate) const COMMUNICATE_RETRIES: u32 = 10;
+const COMMUNICATE_RETRIES: u32 = 10;
 
 /// Kernel taint messages, index `i` describing bit `i` of
 /// `/proc/sys/kernel/tainted`, in upstream order.
-pub const TAINTED_MSG: [&str; 18] = [
+const TAINTED_MSG: [&str; 18] = [
     "proprietary module was loaded",
     "module was force loaded",
     "kernel running on an out of specification system",
@@ -122,7 +122,7 @@ pub struct SutInfo {
 pub struct TaintedInfo {
     /// Raw taint code from `/proc/sys/kernel/tainted`.
     pub code: u64,
-    /// One message per set bit, in [`TAINTED_MSG`] order.
+    /// One message per set bit, in `TAINTED_MSG` order.
     pub messages: Vec<String>,
 }
 
@@ -466,7 +466,7 @@ fn mem_value(pattern: &str, text: &str) -> Result<String, KirkError> {
         .map_or_else(|| UNKNOWN.to_owned(), |found| found.as_str().to_owned()))
 }
 
-/// Parse taint output: digits only, then one [`TAINTED_MSG`] entry per set
+/// Parse taint output: digits only, then one `TAINTED_MSG` entry per set
 /// bit, least-significant bit first (matching the upstream reversed format).
 fn parse_tainted(output: &str) -> Result<TaintedInfo, KirkError> {
     let code_str = output.trim();

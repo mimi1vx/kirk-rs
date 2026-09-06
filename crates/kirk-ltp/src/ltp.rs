@@ -3,9 +3,9 @@
 //! # Security
 //!
 //! `fetch_file` paths are confined to the framework root
-//! ([`validate_suite_name`] rejects
+//! (`validate_suite_name` rejects
 //! separators and parent references), `ltp.json` is capped at
-//! [`MAX_METADATA_BYTES`], and test
+//! `MAX_METADATA_BYTES`, and test
 //! stdout is truncated to
 //! [`MAX_STDOUT_BYTES`](crate::parse::MAX_STDOUT_BYTES) before parsing.
 //! All regexes are linear-time (no nested quantifiers).
@@ -34,7 +34,7 @@ const DEFAULT_TIMEOUT: f64 = 30.0;
 /// Tags whose presence marks a test as non-parallelizable.
 ///
 /// Byte-parity with upstream `PARALLEL_BLACKLIST`.
-pub const PARALLEL_BLACKLIST: &[&str] = &[
+const PARALLEL_BLACKLIST: &[&str] = &[
     "needs_root",
     "needs_device",
     "mount_device",
@@ -125,12 +125,6 @@ impl LtpFramework {
         };
         framework.update_env_vars(timeout);
         framework
-    }
-
-    /// Filter limit in seconds; `0.0` disables filtering.
-    #[must_use]
-    pub fn max_runtime(&self) -> f64 {
-        self.max_runtime
     }
 
     /// LTP installation root.

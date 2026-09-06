@@ -13,4 +13,4 @@ pub use redirect::{
     RUN_CMD_STDOUT_EVENT, RedirectSutStdout, RedirectTestStdout, SUT_STDOUT_EVENT,
     TEST_STDOUT_EVENT,
 };
-pub use sut::{FAULT_INJECTION_FILES, Sut, SutInfo, TAINTED_MSG, TaintBegin, TaintedInfo};
+pub use sut::{FAULT_INJECTION_FILES, Sut, SutInfo, TaintBegin, TaintedInfo};

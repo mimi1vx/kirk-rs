@@ -214,12 +214,6 @@ where
         }
     }
 
-    /// Event registry used for session events.
-    #[must_use]
-    pub fn events(&self) -> &EventRegistry {
-        &self.events
-    }
-
     /// Temporary directory of the session.
     #[must_use]
     pub fn tmpdir(&self) -> &TempDir {
@@ -232,7 +226,7 @@ where
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when `regex` does not compile.
-    pub fn filter_tests(
+    pub(crate) fn filter_tests(
         suites: &mut [Suite],
         regex: Option<&str>,
         when_matching: bool,
@@ -258,7 +252,7 @@ where
     /// Rename suites for repeated execution: `suite[i]` per iteration.
     /// `iterate <= 1` returns the input unchanged.
     #[must_use]
-    pub fn apply_iterate(suites: Vec<Suite>, iterate: usize) -> Vec<Suite> {
+    pub(crate) fn apply_iterate(suites: Vec<Suite>, iterate: usize) -> Vec<Suite> {
         if iterate <= 1 {
             return suites;
         }

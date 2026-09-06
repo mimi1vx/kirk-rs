@@ -15,8 +15,8 @@
 //!
 //! # Bounds
 //!
-//! Combined stdout+stderr per command is capped at [`MAX_OUTPUT_BYTES`];
-//! `fetch_file` is capped at [`MAX_FETCH_BYTES`]. Past the cap the child is
+//! Combined stdout+stderr per command is capped at `MAX_OUTPUT_BYTES`;
+//! `fetch_file` is capped at `MAX_FETCH_BYTES`. Past the cap the child is
 //! killed and the call fails, so a runaway command cannot OOM the runner.
 
 use std::collections::HashMap;
@@ -32,10 +32,10 @@ use tokio::io::AsyncReadExt as _;
 use tokio::process::Command;
 
 /// Cap for combined stdout+stderr bytes kept per [`ComChannel::run_command`].
-pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Cap for bytes returned by [`ComChannel::fetch_file`].
-pub const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
+const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
 
 /// Chunk size for streaming child output.
 const READ_CHUNK: usize = 8192;
@@ -434,7 +434,7 @@ impl ComChannel for ShellChannel {
     ///
     /// Returns [`KirkError::Communication`] when inactive, when the command
     /// is empty or needs a shell, on spawn/I/O failures, or past
-    /// [`MAX_OUTPUT_BYTES`]. Returns [`KirkError::KernelPanic`] when the
+    /// `MAX_OUTPUT_BYTES`. Returns [`KirkError::KernelPanic`] when the
     /// output contains `Kernel panic`.
     #[allow(
         clippy::too_many_lines,
@@ -579,7 +579,7 @@ impl ComChannel for ShellChannel {
         }))
     }
 
-    /// Fetch a local file, capped at [`MAX_FETCH_BYTES`].
+    /// Fetch a local file, capped at `MAX_FETCH_BYTES`.
     ///
     /// # Errors
     ///

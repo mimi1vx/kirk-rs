@@ -5,7 +5,7 @@
 //! needed. The SUT owns its channel; the framework borrows it through the
 //! shared `SutHandle`. UI selection mirrors upstream (`workers > 1` →
 //! parallel, `verbose` → verbose, else simple); `Ctrl-C` maps to
-//! [`RC_INTERRUPT`].
+//! `RC_INTERRUPT`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ fn secs(value: u64) -> f64 {
 ///
 /// Never panics; pure function over its arguments.
 #[must_use]
-pub fn select_ui(workers: usize, verbose: bool) -> UiKind {
+fn select_ui(workers: usize, verbose: bool) -> UiKind {
     if workers > 1 {
         UiKind::Parallel
     } else if verbose {
@@ -109,7 +109,7 @@ fn builtin_template(name: &str, id: &str) -> Option<Box<dyn ComChannel>> {
 /// # Errors
 ///
 /// Returns [`KirkError::Session`] when the skip file cannot be read.
-pub async fn get_skip_tests(
+async fn get_skip_tests(
     skip_tests: Option<&str>,
     skip_file: Option<&str>,
 ) -> Result<String, KirkError> {
@@ -138,7 +138,7 @@ pub async fn get_skip_tests(
 /// # Errors
 ///
 /// Returns [`KirkError::Session`] when the folder does not exist.
-pub fn resolve_restore(path: Option<&str>) -> Result<Option<String>, KirkError> {
+fn resolve_restore(path: Option<&str>) -> Result<Option<String>, KirkError> {
     let Some(path) = path.filter(|p| !p.is_empty()) else {
         return Ok(None);
     };
@@ -215,7 +215,7 @@ pub struct CliSut {
 impl CliSut {
     /// Wrap a shared SUT, caching the sync accessors.
     #[must_use]
-    pub fn new(sut: SutHandle) -> Self {
+    fn new(sut: SutHandle) -> Self {
         let (name, parallel) = sut.try_lock().map_or_else(
             |_| (String::from("default"), true),
             |guard| {
@@ -393,7 +393,7 @@ impl SessionFramework for CliFramework {
 ///
 /// Setup failures propagate for the caller to report as argument errors
 /// (exit 2, like upstream `parser.error`); a failed run resolves to
-/// [`RC_ERROR`] after the `session_error` event reaches the UI.
+/// `RC_ERROR` after the `session_error` event reaches the UI.
 ///
 /// # Errors
 ///

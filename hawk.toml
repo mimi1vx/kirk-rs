@@ -17,3 +17,488 @@
 package = "kirk-cli"
 bin = "kirk"
 reason = "shipped application binary"
+
+# Intentional public surface: unit-tested ported API. Each entry below
+# names one `unnecessary_public` finding whose only callers are this
+# crate's own unit tests. These stay `pub` (rather than `pub(crate)` or
+# private) because test-only uses do not count for normal builds and
+# narrowing them trips rustc `dead_code` under `clippy -- -D warnings`.
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_com_ltx"
+item = "ltx::test_support::Fifos::infile"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_com_ltx"
+item = "ltx::test_support::Fifos::outfile"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_com_ssh"
+item = "config::OutputCollector::panicked"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_core"
+item = "data::Suite::set_name"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_core"
+item = "types_util::dict_item"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_ltp"
+item = "ltp::LtpFramework::root"
+kind = "inherent_method"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_scheduler"
+item = "suite_sched::SuiteScheduler::<S, F>::suite_timeout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_scheduler"
+item = "test_sched::TestScheduler::<S, F>::max_workers"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_scheduler"
+item = "test_sched::TestScheduler::<S, F>::test_timeout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_session"
+item = "session::Session::<S, F>::tmpdir"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ParallelUi"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "SimpleUi"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "VerboseUi"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "io::AsyncFile::read"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "io::AsyncFile::read_bytes"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "io::AsyncFile::seek"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "io::AsyncFile::tell"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::kernel_panic"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::kernel_tainted"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::run_cmd_start"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::run_cmd_stop"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::session_error"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::session_restore"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::session_started"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::session_stopped"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::session_warning"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::suite_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::suite_started"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::suite_timeout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::sut_not_responding"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::sut_restart"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::sut_start"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::sut_stdout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::sut_stop"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::test_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::test_started"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::test_stdout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "monitor::JSONFileMonitor::test_timed_out"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "tempfile::TempDir::mkdir"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "tempfile::TempDir::mkfile"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "tempfile::TempDir::root"
+kind = "inherent_method"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::GREEN"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::format_cmdline"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::no_colors"
+kind = "inherent_method"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::print_section"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::print_summary"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::print_target_info"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::print_underline"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::result_color"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::session_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::session_dry_run"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ConsoleUi::user_friendly_duration"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ParallelUi::new"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ParallelUi::print_parallel"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::ParallelUi::test_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::kernel_panic"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::kernel_tainted"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::new"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::sut_not_responding"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::test_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::SimpleUi::test_timed_out"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VecPrinter::contents"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VecPrinter::new"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VerboseUi::kernel_tainted"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VerboseUi::new"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VerboseUi::sut_stdout"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VerboseUi::test_completed"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"
+
+[[override]]
+lint = "hawk::unnecessary_public"
+crate = "kirk_support"
+item = "ui::VerboseUi::test_timed_out"
+level = "allow"
+reason = "unit-tested ported API exercised only by this crate's own tests; narrowing it activates rustc dead_code under CI's clippy -D warnings"

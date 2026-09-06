@@ -10,9 +10,9 @@
 //! * Handlers are fallible: returning `Err` models a Python handler raising.
 //!   Panics are still isolated via owned [`JoinSet`]
 //!   tasks and forwarded like any other failure.
-//! * Failures reach [`INTERNAL_ERROR`] handlers as [`EventArgs`] holding the
+//! * Failures reach `INTERNAL_ERROR` handlers as [`EventArgs`] holding the
 //!   failing event name plus the failure description. Failures raised *by*
-//!   [`INTERNAL_ERROR`] handlers are dropped instead of propagated, so a
+//!   `INTERNAL_ERROR` handlers are dropped instead of propagated, so a
 //!   broken error handler can neither recurse nor kill the loop.
 //! * [`EventRegistry::unregister`] on an unknown event is a no-op success;
 //!   upstream raises `ValueError`.
@@ -36,12 +36,12 @@ use tokio::task::{JoinError, JoinSet};
 /// Present from construction with no handlers, mirroring `EventsHandler`.
 /// [`EventRegistry::reset`] removes it (as upstream does); re-register
 /// handlers to receive failures again.
-pub const INTERNAL_ERROR: &str = "internal_error";
+const INTERNAL_ERROR: &str = "internal_error";
 
 /// Arguments delivered to every handler of a fired event.
 ///
 /// Upstream passes arbitrary `*args`/`**kwargs`; this port carries only what
-/// call sites need. For [`INTERNAL_ERROR`] deliveries, `event` is the
+/// call sites need. For `INTERNAL_ERROR` deliveries, `event` is the
 /// *failing* event name and `message` is the failure description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventArgs {
@@ -112,7 +112,7 @@ pub struct EventRegistry {
 }
 
 impl EventRegistry {
-    /// Build an empty registry with a handler-less [`INTERNAL_ERROR`] event.
+    /// Build an empty registry with a handler-less `INTERNAL_ERROR` event.
     #[must_use]
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -208,7 +208,7 @@ impl EventRegistry {
             .is_some_and(|entry| !entry.handlers.is_empty()))
     }
 
-    /// Clear all registrations, including [`INTERNAL_ERROR`], mirroring upstream.
+    /// Clear all registrations, including `INTERNAL_ERROR`, mirroring upstream.
     pub async fn reset(&self) {
         self.inner.events.lock().await.clear();
     }

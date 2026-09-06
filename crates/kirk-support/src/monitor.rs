@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use crate::io::AsyncFile;
 
 /// Event types handled by [`JSONFileMonitor`], in upstream order.
-pub const EVENT_TYPES: &[&str] = &[
+const EVENT_TYPES: &[&str] = &[
     "session_restore",
     "session_started",
     "session_stopped",
@@ -97,18 +97,12 @@ impl JSONFileMonitor {
         })
     }
 
-    /// Monitored file path.
-    #[must_use]
-    pub fn path(&self) -> PathBuf {
-        self.inner.path.clone()
-    }
-
     /// Write one `{type, message}` single-line document, overwriting the file.
     ///
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the file cannot be written.
-    pub async fn record(&self, msg_type: &str, message: Value) -> Result<(), KirkError> {
+    async fn record(&self, msg_type: &str, message: Value) -> Result<(), KirkError> {
         let mut data = Map::new();
         data.insert(String::from("type"), Value::String(msg_type.to_owned()));
         data.insert(String::from("message"), message);
@@ -127,7 +121,7 @@ impl JSONFileMonitor {
         Ok(())
     }
 
-    /// Subscribe to all [`EVENT_TYPES`] on `registry`.
+    /// Subscribe to all `EVENT_TYPES` on `registry`.
     ///
     /// String payloads are recorded as `{"message": payload}` (`{}` when
     /// absent); payloads that already parse as JSON objects are embedded
@@ -159,7 +153,7 @@ impl JSONFileMonitor {
         Ok(())
     }
 
-    /// Unsubscribe from all [`EVENT_TYPES`] on `registry`.
+    /// Unsubscribe from all `EVENT_TYPES` on `registry`.
     ///
     /// # Errors
     ///

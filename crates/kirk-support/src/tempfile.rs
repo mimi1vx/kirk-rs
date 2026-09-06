@@ -19,14 +19,13 @@ use kirk_core::KirkError;
 pub struct TempDir {
     root: Option<PathBuf>,
     folder: PathBuf,
-    max_rotate: usize,
 }
 
 impl TempDir {
     /// Name of the symlink pointing at the newest session folder.
-    pub const SYMLINK_NAME: &'static str = "latest";
+    const SYMLINK_NAME: &'static str = "latest";
     /// Prefix of the per-user directory holding rotated session folders.
-    pub const FOLDER_PREFIX: &'static str = "kirk.";
+    const FOLDER_PREFIX: &'static str = "kirk.";
 
     /// Create a `TempDir` under `root`, rotating old session folders.
     ///
@@ -43,7 +42,6 @@ impl TempDir {
             return Ok(Self {
                 root: None,
                 folder: PathBuf::new(),
-                max_rotate,
             });
         };
         if !Path::new(root).is_dir() {
@@ -58,7 +56,6 @@ impl TempDir {
         Ok(Self {
             root: Some(root),
             folder,
-            max_rotate,
         })
     }
 
@@ -75,12 +72,6 @@ impl TempDir {
     #[must_use]
     pub fn abspath(&self) -> &Path {
         &self.folder
-    }
-
-    /// Maximum number of rotated session folders kept.
-    #[must_use]
-    pub fn max_rotate(&self) -> usize {
-        self.max_rotate
     }
 
     /// Create `path` as a directory inside the session folder.

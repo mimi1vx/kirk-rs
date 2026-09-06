@@ -9,9 +9,9 @@ pub mod monitor;
 pub mod tempfile;
 pub mod ui;
 
-pub use export::{JSONExporter, report_value, status_str};
+pub use export::JSONExporter;
 pub use io::AsyncFile;
-pub use monitor::{EVENT_TYPES, JSONFileMonitor};
+pub use monitor::JSONFileMonitor;
 pub use tempfile::TempDir;
 pub use ui::{
     ConsoleUi, ParallelUi, Printer, SimpleUi, StdoutPrinter, VecPrinter, VerboseUi, attach_console,

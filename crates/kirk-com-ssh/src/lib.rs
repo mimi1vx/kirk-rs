@@ -16,7 +16,7 @@
 //!   handles; in-flight commands fail closed on the dropped session.
 //! - `reset_cmd` runs via argv, never via a shell (upstream uses
 //!   `create_subprocess_shell`).
-//! - `fetch_file` enforces [`FETCH_SIZE_CAP`].
+//! - `fetch_file` enforces `FETCH_SIZE_CAP`.
 //! - No overall timeout on the `run_command` data loop (matches upstream
 //!   `wait_closed`); every initiating call (dial/auth/open/exec) has one.
 
@@ -34,12 +34,10 @@ use russh::client::{AuthResult, Config as RusshConfig, Handle, Handler};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
+pub use config::SshConfig;
 use config::{
-    DEFAULT_MAX_SESSIONS, IO_TIMEOUT, OutputCollector, PROBE_TIMEOUT, RESET_TIMEOUT, split_argv,
-};
-pub use config::{
-    FETCH_SIZE_CAP, SshConfig, build_remote_command, expand_known_hosts, parse_max_sessions,
-    quote_sh,
+    DEFAULT_MAX_SESSIONS, FETCH_SIZE_CAP, IO_TIMEOUT, OutputCollector, PROBE_TIMEOUT,
+    RESET_TIMEOUT, build_remote_command, parse_max_sessions, quote_sh, split_argv,
 };
 
 type Session = Handle<HostKeyVerifier>;

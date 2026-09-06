@@ -75,7 +75,7 @@ impl Default for JSONExporter {
 
 /// Build the fixed-schema report document for `results`.
 #[must_use]
-pub fn report_value(results: &[SuiteResults]) -> Value {
+fn report_value(results: &[SuiteResults]) -> Value {
     let entries: Vec<Value> = results
         .iter()
         .flat_map(|result| result.tests_results().iter().map(test_entry))
@@ -192,7 +192,7 @@ fn environment_value(first: &SuiteResults) -> Value {
 
 /// Map a numeric status to its report string, mirroring upstream.
 #[must_use]
-pub fn status_str(status: i32) -> &'static str {
+fn status_str(status: i32) -> &'static str {
     if status == ResultStatus::PASS {
         "pass"
     } else if status == ResultStatus::BROK {

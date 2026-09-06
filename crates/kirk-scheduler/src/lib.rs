@@ -7,10 +7,8 @@
 //! [`Framework`] traits defined here, never on the
 //! `kirk-sut` / `kirk-ltp` crates.
 
-pub mod scheduler;
 pub mod suite_sched;
 pub mod test_sched;
 
-pub use scheduler::Scheduler;
 pub use suite_sched::SuiteScheduler;
-pub use test_sched::{Framework, StdoutBuffer, Sut, TestScheduler, TestStatus};
+pub use test_sched::{Framework, StdoutBuffer, Sut, TestScheduler};

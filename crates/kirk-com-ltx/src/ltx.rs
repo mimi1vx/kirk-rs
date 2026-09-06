@@ -30,9 +30,9 @@ use crate::request::{Field, Frame, OP_ERROR, Reply, Request};
 /// Read chunk size, mirroring Python `LTX.BUFFSIZE`.
 pub(crate) const READ_CHUNK: usize = 1 << 21;
 /// Maximum buffered-but-undecoded bytes; bounds transient allocations.
-pub(crate) const MAX_BUFFERED_BYTES: usize = 8 << 20;
+const MAX_BUFFERED_BYTES: usize = 8 << 20;
 /// Maximum msgpack nesting depth accepted while decoding.
-pub(crate) const MAX_DECODE_DEPTH: usize = 4;
+const MAX_DECODE_DEPTH: usize = 4;
 /// Delay between reply polls, mirroring the Python `asyncio.sleep(0.005)`.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -234,7 +234,7 @@ impl Ltx {
 
     /// Whether the poll task is running.
     #[must_use]
-    pub fn connected(&self) -> bool {
+    pub(crate) fn connected(&self) -> bool {
         self.shared.running.load(Ordering::SeqCst)
     }
 
@@ -305,7 +305,7 @@ impl Ltx {
     ///
     /// Returns [`KirkError::Ltx`] when no requests are given, when not
     /// connected, or when packing/writing fails.
-    pub async fn send(&self, requests: Vec<Request>) -> Result<Vec<u64>, KirkError> {
+    async fn send(&self, requests: Vec<Request>) -> Result<Vec<u64>, KirkError> {
         if requests.is_empty() {
             return Err(KirkError::Ltx("No requests given".to_string()));
         }
