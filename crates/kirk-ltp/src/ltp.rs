@@ -34,7 +34,7 @@ const DEFAULT_TIMEOUT: f64 = 30.0;
 /// Tags whose presence marks a test as non-parallelizable.
 ///
 /// Byte-parity with upstream `PARALLEL_BLACKLIST`.
-pub const PARALLEL_BLACKLIST: &[&str] = &[
+const PARALLEL_BLACKLIST: &[&str] = &[
     "needs_root",
     "needs_device",
     "mount_device",
@@ -127,15 +127,9 @@ impl LtpFramework {
         framework
     }
 
-    /// Filter limit in seconds; `0.0` disables filtering.
-    #[must_use]
-    pub fn max_runtime(&self) -> f64 {
-        self.max_runtime
-    }
-
     /// LTP installation root.
     #[must_use]
-    pub fn root(&self) -> &str {
+    fn root(&self) -> &str {
         &self.root
     }
 

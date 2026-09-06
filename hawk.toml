@@ -1,0 +1,8 @@
+# Hawk configuration: the shipped `kirk` binary is the sole production target.
+# No `--exclude-crate` entries: channels (kirk-com-*) are statically linked
+# into the binary (see AGENTS.md) and no workspace crate is consumed
+# externally, so every library crate stays in the diagnostic surface.
+[[production]]
+package = "kirk-cli"
+bin = "kirk"
+reason = "shipped application binary"

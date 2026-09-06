@@ -34,13 +34,11 @@ use russh::client::{AuthResult, Config as RusshConfig, Handle, Handler};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
+pub use config::SshConfig;
 use config::{
     DEFAULT_MAX_SESSIONS, IO_TIMEOUT, OutputCollector, PROBE_TIMEOUT, RESET_TIMEOUT, split_argv,
 };
-pub use config::{
-    FETCH_SIZE_CAP, SshConfig, build_remote_command, expand_known_hosts, parse_max_sessions,
-    quote_sh,
-};
+pub(crate) use config::{FETCH_SIZE_CAP, build_remote_command, parse_max_sessions, quote_sh};
 
 type Session = Handle<HostKeyVerifier>;
 

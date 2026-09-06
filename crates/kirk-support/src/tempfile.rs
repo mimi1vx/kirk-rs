@@ -19,14 +19,13 @@ use kirk_core::KirkError;
 pub struct TempDir {
     root: Option<PathBuf>,
     folder: PathBuf,
-    max_rotate: usize,
 }
 
 impl TempDir {
     /// Name of the symlink pointing at the newest session folder.
-    pub const SYMLINK_NAME: &'static str = "latest";
+    const SYMLINK_NAME: &'static str = "latest";
     /// Prefix of the per-user directory holding rotated session folders.
-    pub const FOLDER_PREFIX: &'static str = "kirk.";
+    const FOLDER_PREFIX: &'static str = "kirk.";
 
     /// Create a `TempDir` under `root`, rotating old session folders.
     ///
@@ -43,7 +42,6 @@ impl TempDir {
             return Ok(Self {
                 root: None,
                 folder: PathBuf::new(),
-                max_rotate,
             });
         };
         if !Path::new(root).is_dir() {
@@ -58,13 +56,12 @@ impl TempDir {
         Ok(Self {
             root: Some(root),
             folder,
-            max_rotate,
         })
     }
 
     /// Root folder, or an empty string when no root was given.
     #[must_use]
-    pub fn root(&self) -> &str {
+    fn root(&self) -> &str {
         self.root
             .as_ref()
             .and_then(|root| root.to_str())
@@ -77,19 +74,13 @@ impl TempDir {
         &self.folder
     }
 
-    /// Maximum number of rotated session folders kept.
-    #[must_use]
-    pub fn max_rotate(&self) -> usize {
-        self.max_rotate
-    }
-
     /// Create `path` as a directory inside the session folder.
     ///
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when `path` escapes the session folder
     /// or the directory cannot be created.
-    pub fn mkdir(&self, path: &str) -> Result<(), KirkError> {
+    fn mkdir(&self, path: &str) -> Result<(), KirkError> {
         if self.folder.as_os_str().is_empty() {
             return Ok(());
         }
@@ -105,7 +96,7 @@ impl TempDir {
     ///
     /// Returns [`KirkError::Session`] when `path` escapes the session folder
     /// or the file cannot be written.
-    pub fn mkfile(&self, path: &str, content: &str) -> Result<(), KirkError> {
+    fn mkfile(&self, path: &str, content: &str) -> Result<(), KirkError> {
         if self.folder.as_os_str().is_empty() {
             return Ok(());
         }

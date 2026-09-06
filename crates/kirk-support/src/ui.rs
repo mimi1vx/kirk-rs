@@ -31,13 +31,13 @@ pub struct VecPrinter {
 impl VecPrinter {
     /// Create an empty capturing printer.
     #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self::default()
     }
 
     /// All captured output concatenated.
     #[must_use]
-    pub fn contents(&self) -> String {
+    fn contents(&self) -> String {
         self.chunks
             .lock()
             .map_or_else(|_| String::new(), |c| c.join(""))
@@ -79,18 +79,16 @@ pub struct ConsoleUi {
     no_colors: bool,
     printer: Arc<dyn Printer>,
     lock: tokio::sync::Mutex<()>,
-    num_suites: tokio::sync::Mutex<usize>,
 }
 
 impl ConsoleUi {
     /// ANSI colors, mirroring upstream constants.
-    pub const WHITE: &'static str = "\x1b[1;37m";
-    pub const GREEN: &'static str = "\x1b[1;32m";
-    pub const YELLOW: &'static str = "\x1b[1;33m";
-    pub const RED: &'static str = "\x1b[1;31m";
-    pub const CYAN: &'static str = "\x1b[1;36m";
-    pub const RESET_COLOR: &'static str = "\x1b[0m";
-    pub const RESET_SCREEN: &'static str = "\x1b[2J";
+    const GREEN: &'static str = "\x1b[1;32m";
+    const YELLOW: &'static str = "\x1b[1;33m";
+    const RED: &'static str = "\x1b[1;31m";
+    const CYAN: &'static str = "\x1b[1;36m";
+    const RESET_COLOR: &'static str = "\x1b[0m";
+    const RESET_SCREEN: &'static str = "\x1b[2J";
 
     /// Create a console UI writing to `printer`.
     pub fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
@@ -98,18 +96,17 @@ impl ConsoleUi {
             no_colors,
             printer,
             lock: tokio::sync::Mutex::new(()),
-            num_suites: tokio::sync::Mutex::new(1),
         }
     }
 
     /// Whether colors are disabled.
     #[must_use]
-    pub fn no_colors(&self) -> bool {
+    fn no_colors(&self) -> bool {
         self.no_colors
     }
 
     /// Print a raw message chunk.
-    pub async fn print_message(&self, msg: &str, end: &str) {
+    async fn print_message(&self, msg: &str, end: &str) {
         let text = format!("{msg}{end}");
         let _guard = self.lock.lock().await;
         let printer = Arc::clone(&self.printer);
@@ -117,7 +114,7 @@ impl ConsoleUi {
     }
 
     /// Format and deliver one message, honoring `--no-colors`.
-    pub async fn styled(&self, msg: &str, color: Option<&str>, end: &str) {
+    async fn styled(&self, msg: &str, color: Option<&str>, end: &str) {
         let mut text: String = msg.replace(Self::RESET_SCREEN, "").replace('\r', "");
         if let Some(color) = color
             && !self.no_colors
@@ -129,7 +126,7 @@ impl ConsoleUi {
 
     /// User-friendly duration, mirroring `_user_friendly_duration`.
     #[must_use]
-    pub fn user_friendly_duration(duration: f64) -> String {
+    fn user_friendly_duration(duration: f64) -> String {
         if duration == 0.0 {
             return String::from("0h 0m 0s");
         }
@@ -149,7 +146,7 @@ impl ConsoleUi {
 
     /// Format a kernel cmdline across lines, mirroring `_format_cmdline`.
     #[must_use]
-    pub fn format_cmdline(cmdline: Option<&str>) -> String {
+    fn format_cmdline(cmdline: Option<&str>) -> String {
         let Some(cmdline) = cmdline else {
             return String::new();
         };
@@ -170,7 +167,7 @@ impl ConsoleUi {
 
     /// Result label and color, mirroring `_result_color`.
     #[must_use]
-    pub fn result_color(results: &TestResults) -> (&'static str, &'static str) {
+    fn result_color(results: &TestResults) -> (&'static str, &'static str) {
         if results.failed() > 0 {
             return ("fail", Self::RED);
         }
@@ -184,20 +181,20 @@ impl ConsoleUi {
     }
 
     /// Print an underlined message.
-    pub async fn print_underline(&self, msg: &str) {
+    async fn print_underline(&self, msg: &str) {
         let line = "─".repeat(msg.chars().count());
         self.styled(&format!("{msg}\n{line}"), None, "\n").await;
     }
 
     /// Print a section title surrounded by lines.
-    pub async fn print_section(&self, msg: &str) {
+    async fn print_section(&self, msg: &str) {
         let line = "─".repeat(msg.chars().count() + 12);
         self.styled(&format!("{line}\n      {msg}\n{line}"), None, "\n")
             .await;
     }
 
     /// Print target information for the first suite results.
-    pub async fn print_target_info(&self, results: &SuiteResults) {
+    async fn print_target_info(&self, results: &SuiteResults) {
         let message = format!(
             "Kernel:   {}\nCmdline:  {}\nMachine:  {}\nArch:     {}\nRAM:      {}\nSwap:     {}\nDistro:   {} {}\n",
             results.kernel().unwrap_or_default(),
@@ -214,7 +211,7 @@ impl ConsoleUi {
     }
 
     /// Print a summary for testing suites.
-    pub async fn print_summary(&self, results: &[SuiteResults]) {
+    async fn print_summary(&self, results: &[SuiteResults]) {
         let suites: Vec<&str> = results.iter().map(|r| r.suite().name()).collect();
         let runs: usize = results.iter().map(|r| r.tests_results().len()).sum();
         let passed: u32 = results.iter().map(SuiteResults::passed).sum();
@@ -232,14 +229,13 @@ impl ConsoleUi {
     }
 
     /// Handle `session_restore`.
-    pub async fn session_restore(&self, restore: &str) {
+    async fn session_restore(&self, restore: &str) {
         self.styled(&format!("Restore session: {restore}"), None, "\n")
             .await;
     }
 
     /// Handle `session_started`.
-    pub async fn session_started(&self, num_suites: usize, tmpdir: &str) {
-        *self.num_suites.lock().await = num_suites;
+    async fn session_started(&self, tmpdir: &str) {
         let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| String::from("unknown"));
         let message =
             format!("Host information\n\tHostname:   {hostname}\n\tDirectory:  {tmpdir}\n");
@@ -247,86 +243,58 @@ impl ConsoleUi {
     }
 
     /// Handle `session_stopped`.
-    pub async fn session_stopped(&self) {
+    async fn session_stopped(&self) {
         self.styled("Session stopped", None, "\n").await;
     }
 
     /// Handle `sut_start`.
-    pub async fn sut_start(&self, sut: &str) {
+    async fn sut_start(&self, sut: &str) {
         self.styled(&format!("Connecting to SUT: {sut}\n"), None, "\n")
             .await;
     }
 
     /// Handle `sut_stop`.
-    pub async fn sut_stop(&self, sut: &str) {
+    async fn sut_stop(&self, sut: &str) {
         self.styled(&format!("Disconnecting from SUT: {sut}"), None, "\n")
             .await;
     }
 
     /// Handle `sut_restart`.
-    pub async fn sut_restart(&self, sut: &str) {
+    async fn sut_restart(&self, sut: &str) {
         self.styled(&format!("Restarting SUT: {sut}"), None, "\n")
             .await;
     }
 
     /// Handle `run_cmd_start`.
-    pub async fn run_cmd_start(&self, cmd: &str) {
+    async fn run_cmd_start(&self, cmd: &str) {
         self.styled(cmd, Some(Self::CYAN), "\n").await;
     }
 
     /// Handle `run_cmd_stdout`.
-    pub async fn run_cmd_stdout(&self, data: &str) {
+    async fn run_cmd_stdout(&self, data: &str) {
         self.styled(data, None, "").await;
     }
 
     /// Handle `run_cmd_stop`.
-    pub async fn run_cmd_stop(&self, returncode: i32) {
+    async fn run_cmd_stop(&self, returncode: i32) {
         self.styled(&format!("\nExit code: {returncode}\n"), None, "\n")
             .await;
     }
 
-    /// Handle `suite_started`.
-    pub async fn suite_started(&self, suite: &Suite) {
-        self.print_underline(&format!("Suite: {}", suite.name()))
-            .await;
-    }
-
-    /// Handle `suite_completed`.
-    pub async fn suite_completed(&self, results: &SuiteResults, exec_time: f64) {
-        let message = format!(
-            "\nExecution time: {}\n",
-            Self::user_friendly_duration(exec_time)
-        );
-        self.styled(&message, None, "\n").await;
-        if *self.num_suites.lock().await > 1 {
-            self.print_summary(std::slice::from_ref(results)).await;
-        }
-    }
-
-    /// Handle `suite_timeout`.
-    pub async fn suite_timeout(&self, suite: &Suite, timeout: f64) {
-        self.styled(
-            &format!("Suite '{}' timed out after {timeout} seconds", suite.name()),
-            Some(Self::RED),
-            "\n",
-        )
-        .await;
-    }
-
     /// Handle `session_warning`.
-    pub async fn session_warning(&self, msg: &str) {
+    async fn session_warning(&self, msg: &str) {
         self.styled(&format!("Warning: {msg}"), Some(Self::YELLOW), "\n")
             .await;
     }
 
     /// Handle `session_error`.
-    pub async fn session_error(&self, error: &str) {
+    async fn session_error(&self, error: &str) {
         self.styled(&format!("Error: {error}"), Some(Self::RED), "\n")
             .await;
     }
 
     /// Handle `session_completed`.
-    pub async fn session_completed(&self, results: &[SuiteResults]) {
+    async fn session_completed(&self, results: &[SuiteResults]) {
         if results.is_empty() {
             return;
         }
@@ -368,13 +336,13 @@ impl ConsoleUi {
     }
 
     /// Handle `session_dry_run_command`.
-    pub async fn session_dry_run_command(&self, command: &str) {
+    async fn session_dry_run_command(&self, command: &str) {
         self.styled("Command:", Some(Self::CYAN), "\n").await;
         self.styled(&format!("    {command}\n"), None, "\n").await;
     }
 
     /// Handle `session_dry_run`.
-    pub async fn session_dry_run(&self, suites: &[Suite]) {
+    async fn session_dry_run(&self, suites: &[Suite]) {
         let mut total = 0;
         for suite in suites {
             let parallel: Vec<&str> = suite
@@ -413,16 +381,6 @@ impl ConsoleUi {
         self.styled(&format!("Total tests: {total} (not executed)"), None, "\n")
             .await;
     }
-
-    /// Handle `internal_error`.
-    pub async fn internal_error(&self, func_name: &str, error: &str) {
-        self.styled(
-            &format!("\nUI error in function '{func_name}': {error}\n"),
-            Some(Self::RED),
-            "\n",
-        )
-        .await;
-    }
 }
 
 #[derive(Default)]
@@ -434,28 +392,22 @@ struct SimpleState {
 }
 
 /// Console UI without fancy output, mirroring `SimpleUserInterface`.
-pub struct SimpleUi {
+struct SimpleUi {
     console: ConsoleUi,
     state: tokio::sync::Mutex<SimpleState>,
 }
 
 impl SimpleUi {
     /// Create a simple UI writing to `printer`.
-    pub fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
+    fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
         Self {
             console: ConsoleUi::new(no_colors, printer),
             state: tokio::sync::Mutex::new(SimpleState::default()),
         }
     }
 
-    /// Borrow the inner console UI.
-    #[must_use]
-    pub fn console(&self) -> &ConsoleUi {
-        &self.console
-    }
-
     /// Handle `sut_not_responding`.
-    pub async fn sut_not_responding(&self) {
+    async fn sut_not_responding(&self) {
         self.state.lock().await.sut_not_responding = true;
         self.console
             .styled("SUT not responding", Some(ConsoleUi::RED), "\n")
@@ -463,7 +415,7 @@ impl SimpleUi {
     }
 
     /// Handle `kernel_panic`.
-    pub async fn kernel_panic(&self) {
+    async fn kernel_panic(&self) {
         self.state.lock().await.kernel_panic = true;
         self.console
             .styled("kernel panic", Some(ConsoleUi::RED), "\n")
@@ -471,12 +423,12 @@ impl SimpleUi {
     }
 
     /// Handle `kernel_tainted`.
-    pub async fn kernel_tainted(&self, message: &str) {
+    async fn kernel_tainted(&self, message: &str) {
         self.state.lock().await.kernel_tainted = Some(message.to_owned());
     }
 
     /// Handle `test_timed_out`.
-    pub async fn test_timed_out(&self, timeout: i64) {
+    async fn test_timed_out(&self, timeout: i64) {
         self.state.lock().await.timed_out = true;
         self.console
             .styled("timed out", Some(ConsoleUi::RED), "\n")
@@ -484,15 +436,8 @@ impl SimpleUi {
         let _ = timeout;
     }
 
-    /// Handle `test_started`.
-    pub async fn test_started(&self, test: &Test) {
-        self.console
-            .styled(&format!("{}: ", test.name()), Some(ConsoleUi::WHITE), "")
-            .await;
-    }
-
     /// Handle `test_completed`.
-    pub async fn test_completed(&self, results: &TestResults) {
+    async fn test_completed(&self, results: &TestResults) {
         let mut state = self.state.lock().await;
         if state.timed_out || state.sut_not_responding || state.kernel_panic {
             state.sut_not_responding = false;
@@ -522,33 +467,27 @@ impl SimpleUi {
 }
 
 /// Verbose console UI, mirroring `VerboseUserInterface`.
-pub struct VerboseUi {
+struct VerboseUi {
     console: ConsoleUi,
     timed_out: tokio::sync::Mutex<bool>,
 }
 
 impl VerboseUi {
     /// Create a verbose UI writing to `printer`.
-    pub fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
+    fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
         Self {
             console: ConsoleUi::new(no_colors, printer),
             timed_out: tokio::sync::Mutex::new(false),
         }
     }
 
-    /// Borrow the inner console UI.
-    #[must_use]
-    pub fn console(&self) -> &ConsoleUi {
-        &self.console
-    }
-
     /// Handle `sut_stdout`.
-    pub async fn sut_stdout(&self, data: &str) {
+    async fn sut_stdout(&self, data: &str) {
         self.console.styled(data, None, "").await;
     }
 
     /// Handle `kernel_tainted`.
-    pub async fn kernel_tainted(&self, message: &str) {
+    async fn kernel_tainted(&self, message: &str) {
         self.console
             .styled(
                 &format!("Tainted kernel: {message}"),
@@ -559,21 +498,12 @@ impl VerboseUi {
     }
 
     /// Handle `test_timed_out`.
-    pub async fn test_timed_out(&self) {
+    async fn test_timed_out(&self) {
         *self.timed_out.lock().await = true;
     }
 
-    /// Handle `test_started`.
-    pub async fn test_started(&self, test: &Test) {
-        self.console.print_section(test.name()).await;
-        self.console.styled("Executing: ", None, "").await;
-        self.console
-            .styled(&test.full_command(), None, "\n\n")
-            .await;
-    }
-
     /// Handle `test_completed`.
-    pub async fn test_completed(&self, results: &TestResults) {
+    async fn test_completed(&self, results: &TestResults) {
         if *self.timed_out.lock().await {
             self.console
                 .styled("Test timed out", Some(ConsoleUi::RED), "\n")
@@ -598,11 +528,6 @@ impl VerboseUi {
         ));
         self.console.styled(&parts.join("\n"), None, "\n").await;
     }
-
-    /// Handle `test_stdout`.
-    pub async fn test_stdout(&self, data: &str) {
-        self.console.styled(data, None, "").await;
-    }
 }
 
 #[derive(Default)]
@@ -616,48 +541,22 @@ struct ParallelState {
 }
 
 /// Console UI for parallel execution, mirroring `ParallelUserInterface`.
-pub struct ParallelUi {
+struct ParallelUi {
     console: ConsoleUi,
     state: tokio::sync::Mutex<ParallelState>,
 }
 
 impl ParallelUi {
     /// Create a parallel UI writing to `printer`.
-    pub fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
+    fn new(no_colors: bool, printer: Arc<dyn Printer>) -> Self {
         Self {
             console: ConsoleUi::new(no_colors, printer),
             state: tokio::sync::Mutex::new(ParallelState::default()),
         }
     }
 
-    /// Borrow the inner console UI.
-    #[must_use]
-    pub fn console(&self) -> &ConsoleUi {
-        &self.console
-    }
-
-    /// Handle `sut_not_responding`.
-    pub async fn sut_not_responding(&self) {
-        self.state.lock().await.sut_not_responding = true;
-    }
-
-    /// Handle `kernel_panic`.
-    pub async fn kernel_panic(&self) {
-        self.state.lock().await.kernel_panic = true;
-    }
-
-    /// Handle `kernel_tainted`.
-    pub async fn kernel_tainted(&self, message: &str) {
-        self.state.lock().await.kernel_tainted = Some(message.to_owned());
-    }
-
-    /// Handle `test_timed_out`.
-    pub async fn test_timed_out(&self) {
-        self.state.lock().await.timed_out = true;
-    }
-
     /// Handle `suite_started`, listing tests that run in parallel.
-    pub async fn print_parallel(&self, suite: &Suite) {
+    async fn print_parallel(&self, suite: &Suite) {
         let parallel: Vec<String> = suite
             .tests()
             .iter()
@@ -677,7 +576,7 @@ impl ParallelUi {
     }
 
     /// Handle `test_completed`.
-    pub async fn test_completed(&self, results: &TestResults) {
+    async fn test_completed(&self, results: &TestResults) {
         let mut state = self.state.lock().await;
         if results.test().parallelizable() {
             state.done += 1;
@@ -738,10 +637,9 @@ impl ParallelUi {
 
 /// Register the plain-string console handlers on `registry`.
 ///
-/// Structured summaries (`session_completed`, `session_dry_run`,
-/// `suite_started`, `suite_completed`, ...) need [`Suite`] data the
-/// string-only registry cannot carry; render those with direct calls.
-/// `session_started` expects `"<num_suites>\n<tmpdir>"`.
+/// Structured summaries (`session_completed`, `session_dry_run`, ...) need
+/// [`Suite`] data the string-only registry cannot carry; render those with
+/// direct calls. `session_started` expects `"<num_suites>\n<tmpdir>"`.
 ///
 /// # Errors
 ///
@@ -790,10 +688,8 @@ async fn attach_session_events(
         .register(
             "session_started",
             console_handler(ui, |ui, msg| async move {
-                let mut parts = msg.splitn(2, '\n');
-                let count: usize = parts.next().unwrap_or("1").parse().unwrap_or(1);
-                let tmpdir = parts.next().unwrap_or("");
-                ui.session_started(count, tmpdir).await;
+                let tmpdir = msg.split_once('\n').map_or("", |parts| parts.1);
+                ui.session_started(tmpdir).await;
             }),
             false,
         )

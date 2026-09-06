@@ -129,7 +129,7 @@ impl DictItemValue for f64 {
 /// # Errors
 ///
 /// Returns [`DictTypeError`] when a present value has an unexpected type.
-pub fn dict_item<T: DictItemValue>(
+fn dict_item<T: DictItemValue>(
     data: &Map<String, Value>,
     key: &str,
     default: Option<T>,

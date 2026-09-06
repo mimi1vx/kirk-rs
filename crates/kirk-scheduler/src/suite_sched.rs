@@ -77,7 +77,7 @@ where
 
     /// Suite timeout in seconds (`0.0` means disabled).
     #[must_use]
-    pub fn suite_timeout(&self) -> f64 {
+    fn suite_timeout(&self) -> f64 {
         self.suite_timeout
     }
 

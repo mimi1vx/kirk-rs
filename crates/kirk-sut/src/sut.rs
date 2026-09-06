@@ -43,11 +43,11 @@ const UNKNOWN: &str = "unknown";
 const RUN_CMD_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Retries for [`ComChannel::ensure_communicate`], mirroring the Python default.
-pub(crate) const COMMUNICATE_RETRIES: u32 = 10;
+const COMMUNICATE_RETRIES: u32 = 10;
 
 /// Kernel taint messages, index `i` describing bit `i` of
 /// `/proc/sys/kernel/tainted`, in upstream order.
-pub const TAINTED_MSG: [&str; 18] = [
+const TAINTED_MSG: [&str; 18] = [
     "proprietary module was loaded",
     "module was force loaded",
     "kernel running on an out of specification system",

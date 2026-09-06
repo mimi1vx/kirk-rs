@@ -25,9 +25,9 @@ pub enum Validation {
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
     /// Plugin name.
-    pub name: String,
+    pub(crate) name: String,
     /// Configuration help map.
-    pub config_help: HashMap<String, String>,
+    pub(crate) config_help: HashMap<String, String>,
 }
 
 /// Validate `args` exactly in upstream `run()` order.

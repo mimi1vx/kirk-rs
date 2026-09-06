@@ -36,7 +36,7 @@ use tokio::task::{JoinError, JoinSet};
 /// Present from construction with no handlers, mirroring `EventsHandler`.
 /// [`EventRegistry::reset`] removes it (as upstream does); re-register
 /// handlers to receive failures again.
-pub const INTERNAL_ERROR: &str = "internal_error";
+const INTERNAL_ERROR: &str = "internal_error";
 
 /// Arguments delivered to every handler of a fired event.
 ///
