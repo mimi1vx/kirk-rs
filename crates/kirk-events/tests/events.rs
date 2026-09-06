@@ -35,6 +35,41 @@ where
     }
 }
 
+/// Swallow the hook output for the expected `"boom"` panic.
+///
+/// The panic still unwinds into tokio's `JoinError`, so `EventRegistry`
+/// keeps forwarding it to `internal_error`; this only keeps the deliberate
+/// panic out of test stderr. Other payloads delegate to the previous hook.
+fn suppress_expected_boom() -> impl Drop {
+    use std::panic::{PanicHookInfo, set_hook, take_hook};
+    use std::sync::Arc;
+
+    type Hook = Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send>;
+
+    struct Guard {
+        previous: Option<Hook>,
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                set_hook(Box::new(move |info| previous(info)));
+            }
+        }
+    }
+
+    let previous: Hook = take_hook().into();
+    let delegated = Arc::clone(&previous);
+    set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
+        if info.payload_as_str() != Some("boom") {
+            delegated(info);
+        }
+    }));
+    Guard {
+        previous: Some(previous),
+    }
+}
+
 #[tokio::test]
 async fn register_and_reset() {
     let registry = EventRegistry::new();
@@ -261,6 +296,7 @@ async fn handler_error_reaches_internal_error() {
 
 #[tokio::test]
 async fn handler_panic_reaches_internal_error() {
+    let _guard = suppress_expected_boom();
     let registry = EventRegistry::new();
     let errors: Arc<tokio::sync::Mutex<Vec<EventArgs>>> = Arc::default();
 
