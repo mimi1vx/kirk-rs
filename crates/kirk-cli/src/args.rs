@@ -11,21 +11,21 @@ use std::collections::HashMap;
 use clap::Parser;
 
 /// Maximum number of communication objects, mirroring `MAX_COM_INSTANCES`.
-pub(crate) const MAX_COM_INSTANCES: usize = 128;
+pub const MAX_COM_INSTANCES: usize = 128;
 
 /// Success return code, mirroring `RC_OK`.
-pub(crate) const RC_OK: i32 = 0;
+pub const RC_OK: i32 = 0;
 /// Generic failure return code, mirroring `RC_ERROR`.
-pub(crate) const RC_ERROR: i32 = 1;
+pub const RC_ERROR: i32 = 1;
 /// Keyboard-interrupt return code, mirroring `RC_INTERRUPT`.
-pub(crate) const RC_INTERRUPT: i32 = 130;
+pub const RC_INTERRUPT: i32 = 130;
 
 /// Parse `30s`, `4m`, `5h`, `20d` (bare numbers mean seconds).
 ///
 /// # Errors
 ///
 /// Returns a message when the format is not `<digits>[smhd>]`.
-fn parse_time_config(value: &str) -> Result<u64, String> {
+pub fn parse_time_config(value: &str) -> Result<u64, String> {
     let indata = value.trim();
     if indata.is_empty() {
         return Err(format!("Incorrect time format '{value}'"));
@@ -52,7 +52,7 @@ fn parse_time_config(value: &str) -> Result<u64, String> {
 /// # Errors
 ///
 /// Returns a message when the value is not a number.
-fn parse_iterate(value: &str) -> Result<usize, String> {
+pub fn parse_iterate(value: &str) -> Result<usize, String> {
     if value.is_empty() {
         return Ok(1);
     }
@@ -65,7 +65,7 @@ fn parse_iterate(value: &str) -> Result<usize, String> {
 /// # Errors
 ///
 /// Returns a message when the value is not a number.
-fn parse_finjection(value: &str) -> Result<u32, String> {
+pub fn parse_finjection(value: &str) -> Result<u32, String> {
     if value.is_empty() {
         return Ok(0);
     }
@@ -78,7 +78,7 @@ fn parse_finjection(value: &str) -> Result<u32, String> {
 /// # Errors
 ///
 /// Returns a message when the value is not a number.
-fn parse_finterval(value: &str) -> Result<u32, String> {
+pub fn parse_finterval(value: &str) -> Result<u32, String> {
     if value.is_empty() {
         return Ok(1);
     }
@@ -91,7 +91,7 @@ fn parse_finterval(value: &str) -> Result<u32, String> {
 /// # Errors
 ///
 /// Returns a message on empty input, a missing `=`, or an empty key/value.
-fn parse_dict_config(value: &str) -> Result<HashMap<String, String>, String> {
+pub fn parse_dict_config(value: &str) -> Result<HashMap<String, String>, String> {
     if value == "help" {
         return Ok(HashMap::from([(String::from("help"), String::new())]));
     }
@@ -131,11 +131,11 @@ fn parse_dict_config(value: &str) -> Result<HashMap<String, String>, String> {
 pub struct Args {
     /// Verbose mode.
     #[arg(short = 'v', long, help_heading = "General options")]
-    pub(crate) verbose: bool,
+    pub verbose: bool,
 
     /// If defined, no colors are shown.
     #[arg(short = 'n', long = "no-colors", help_heading = "General options")]
-    pub(crate) no_colors: bool,
+    pub no_colors: bool,
 
     /// Temporary directory.
     #[arg(
@@ -144,27 +144,27 @@ pub struct Args {
         default_value = "/tmp",
         help_heading = "General options"
     )]
-    pub(crate) tmp_dir: String,
+    pub tmp_dir: String,
 
     /// Restore a specific session.
     #[arg(short = 'r', long, help_heading = "General options")]
-    pub(crate) restore: Option<String>,
+    pub restore: Option<String>,
 
     /// JSON output report.
     #[arg(short = 'o', long = "json-report", help_heading = "General options")]
-    pub(crate) json_report: Option<String>,
+    pub json_report: Option<String>,
 
     /// Location of the monitor file.
     #[arg(short = 'm', long, help_heading = "General options")]
-    pub(crate) monitor: Option<String>,
+    pub monitor: Option<String>,
 
     /// Communication channel parameters. For help please use '--com help'.
     #[arg(short = 'C', long, value_parser = parse_dict_config, help_heading = "Configuration options")]
-    pub(crate) com: Vec<HashMap<String, String>>,
+    pub com: Vec<HashMap<String, String>>,
 
     /// System Under Test parameters. For help please use '--sut help'.
     #[arg(short = 'u', long, default_value = "default", value_parser = parse_dict_config, help_heading = "Configuration options")]
-    pub(crate) sut: HashMap<String, String>,
+    pub sut: HashMap<String, String>,
 
     /// Skip specific tests.
     #[arg(
@@ -172,7 +172,7 @@ pub struct Args {
         long = "skip-tests",
         help_heading = "Configuration options"
     )]
-    pub(crate) skip_tests: Option<String>,
+    pub skip_tests: Option<String>,
 
     /// Skip specific tests using a skip file (newline separated item).
     #[arg(
@@ -180,39 +180,39 @@ pub struct Args {
         long = "skip-file",
         help_heading = "Configuration options"
     )]
-    pub(crate) skip_file: Option<String>,
+    pub skip_file: Option<String>,
 
     /// List of suites to run.
     #[arg(short = 'f', long = "run-suite", num_args = 0.., help_heading = "Execution options")]
-    pub(crate) run_suite: Option<Vec<String>>,
+    pub run_suite: Option<Vec<String>>,
 
     /// Run all tests matching the regex pattern.
     #[arg(short = 'p', long = "run-pattern", help_heading = "Execution options")]
-    pub(crate) run_pattern: Option<String>,
+    pub run_pattern: Option<String>,
 
     /// Command to run.
     #[arg(short = 'c', long = "run-command", help_heading = "Execution options")]
-    pub(crate) run_command: Option<String>,
+    pub run_command: Option<String>,
 
     /// Timeout before stopping the suite (default: 1h).
     #[arg(short = 'T', long = "suite-timeout", default_value = "1h", value_parser = parse_time_config, help_heading = "Execution options")]
-    pub(crate) suite_timeout: u64,
+    pub suite_timeout: u64,
 
     /// Timeout before stopping a single execution (default: 1h).
     #[arg(short = 't', long = "exec-timeout", default_value = "1h", value_parser = parse_time_config, help_heading = "Execution options")]
-    pub(crate) exec_timeout: u64,
+    pub exec_timeout: u64,
 
     /// Randomize tests execution order.
     #[arg(short = 'R', long, help_heading = "Execution options")]
-    pub(crate) randomize: bool,
+    pub randomize: bool,
 
     /// Set for how long we want to run the session in seconds.
     #[arg(short = 'I', long, default_value = "0", value_parser = parse_time_config, help_heading = "Execution options")]
-    pub(crate) runtime: u64,
+    pub runtime: u64,
 
     /// Number of times to repeat testing suites.
     #[arg(short = 'i', long = "suite-iterate", default_value = "1", value_parser = parse_iterate, help_heading = "Execution options")]
-    pub(crate) suite_iterate: usize,
+    pub suite_iterate: usize,
 
     /// Number of workers to execute tests in parallel.
     #[arg(
@@ -221,7 +221,7 @@ pub struct Args {
         default_value_t = 1,
         help_heading = "Execution options"
     )]
-    pub(crate) workers: usize,
+    pub workers: usize,
 
     /// Force parallelization execution of all tests.
     #[arg(
@@ -229,23 +229,23 @@ pub struct Args {
         long = "force-parallel",
         help_heading = "Execution options"
     )]
-    pub(crate) force_parallel: bool,
+    pub force_parallel: bool,
 
     /// Probability of failure (0-100).
     #[arg(short = 'F', long = "fault-injection", default_value = "0", value_parser = parse_finjection, help_heading = "Execution options")]
-    pub(crate) fault_injection: u32,
+    pub fault_injection: u32,
 
     /// Fault injection interval (default: 1).
     #[arg(long = "fault-interval", default_value = "1", value_parser = parse_finterval, help_heading = "Execution options")]
-    pub(crate) fault_interval: u32,
+    pub fault_interval: u32,
 
     /// Communicate with SUT using commands parallelization (default: false).
     #[arg(short = 'O', long = "optimize-sut", help_heading = "Execution options")]
-    pub(crate) optimize_sut: bool,
+    pub optimize_sut: bool,
 
     /// Performs a dry run listing tests (no execution).
     #[arg(short = 'D', long = "dry-run", help_heading = "Execution options")]
-    pub(crate) dry_run: bool,
+    pub dry_run: bool,
 }
 
 #[cfg(test)]

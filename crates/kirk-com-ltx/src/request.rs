@@ -17,45 +17,45 @@ use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 /// Opcode sent by the peer when a request failed.
-pub(crate) const OP_ERROR: u8 = 0xFF;
+pub const OP_ERROR: u8 = 0xFF;
 /// Opcode of the version request/reply.
-pub(crate) const OP_VERSION: u8 = 0x00;
+pub const OP_VERSION: u8 = 0x00;
 /// Opcode of the ping request echo.
-pub(crate) const OP_PING: u8 = 0x01;
+pub const OP_PING: u8 = 0x01;
 /// Opcode of the ping reply.
-pub(crate) const OP_PONG: u8 = 0x02;
+pub const OP_PONG: u8 = 0x02;
 /// Opcode of the file-download request echo.
-pub(crate) const OP_GET_FILE: u8 = 0x03;
+pub const OP_GET_FILE: u8 = 0x03;
 /// Opcode of the file-upload request echo.
-pub(crate) const OP_SET_FILE: u8 = 0x04;
+pub const OP_SET_FILE: u8 = 0x04;
 /// Opcode of the environment request echo.
-pub(crate) const OP_ENV: u8 = 0x05;
+pub const OP_ENV: u8 = 0x05;
 /// Opcode of the working-directory request echo.
-pub(crate) const OP_CWD: u8 = 0x06;
+pub const OP_CWD: u8 = 0x06;
 /// Opcode of the execute request echo.
-pub(crate) const OP_EXEC: u8 = 0x07;
+pub const OP_EXEC: u8 = 0x07;
 /// Opcode of the execute result.
-pub(crate) const OP_RESULT: u8 = 0x08;
+pub const OP_RESULT: u8 = 0x08;
 /// Opcode of execute stdout chunks.
-pub(crate) const OP_LOG: u8 = 0x09;
+pub const OP_LOG: u8 = 0x09;
 /// Opcode of file-download chunks.
-pub(crate) const OP_DATA: u8 = 0xA0;
+pub const OP_DATA: u8 = 0xA0;
 /// Opcode of the kill request echo.
-pub(crate) const OP_KILL: u8 = 0xA1;
+pub const OP_KILL: u8 = 0xA1;
 
 /// Highest assignable execution slot, mirroring `Request.MAX_SLOTS`.
-pub(crate) const MAX_SLOTS: u8 = 127;
+pub const MAX_SLOTS: u8 = 127;
 /// Broadcast slot id for `ENV`/`CWD`, mirroring `Request.ALL_SLOTS`.
-const ALL_SLOTS: u8 = 128;
+pub const ALL_SLOTS: u8 = 128;
 
 /// Maximum number of fields accepted in a single frame.
-const MAX_FIELDS: usize = 8;
+pub(crate) const MAX_FIELDS: usize = 8;
 /// Maximum size of a single string/binary field.
-const MAX_FIELD_BYTES: usize = 8 << 20;
+pub(crate) const MAX_FIELD_BYTES: usize = 8 << 20;
 /// Maximum accumulated stdout for one `EXECUTE` request.
-const MAX_STDOUT_BYTES: usize = 16 << 20;
+pub(crate) const MAX_STDOUT_BYTES: usize = 16 << 20;
 /// Maximum accumulated payload for one `GET_FILE` request.
-const MAX_FILE_BYTES: usize = 64 << 20;
+pub(crate) const MAX_FILE_BYTES: usize = 64 << 20;
 
 /// Execution slot id, mirroring the `slot_id` bounds check of the Python
 /// `execute`/`kill` requests (`0..=MAX_SLOTS`).
@@ -80,7 +80,7 @@ impl SlotId {
 
     /// Return the raw slot id.
     #[must_use]
-    fn get(self) -> u8 {
+    pub fn get(self) -> u8 {
         self.0
     }
 }
@@ -142,7 +142,7 @@ impl Field {
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] for non-integer or negative values.
-    fn as_u64(&self) -> Result<u64, KirkError> {
+    pub(crate) fn as_u64(&self) -> Result<u64, KirkError> {
         match *self {
             Self::U64(v) => Ok(v),
             Self::I64(v) => {
@@ -157,7 +157,7 @@ impl Field {
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] for non-integer or out-of-range values.
-    fn as_i32(&self) -> Result<i32, KirkError> {
+    pub(crate) fn as_i32(&self) -> Result<i32, KirkError> {
         let v = match *self {
             Self::U64(v) => i64::try_from(v)
                 .map_err(|_| KirkError::Ltx(format!("integer {v} does not fit in i32")))?,
@@ -184,7 +184,7 @@ impl Field {
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] for non-string, non-binary fields.
-    fn as_bytes(&self) -> Result<&[u8], KirkError> {
+    pub(crate) fn as_bytes(&self) -> Result<&[u8], KirkError> {
         match self {
             Self::Bin(b) => Ok(b),
             Self::Str(s) => Ok(s.as_bytes()),
@@ -458,7 +458,7 @@ impl Request {
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] for out-of-range slots or an empty path.
-    pub(crate) fn cwd(slot: Option<u8>, path: &str) -> Result<Self, KirkError> {
+    pub fn cwd(slot: Option<u8>, path: &str) -> Result<Self, KirkError> {
         let slot = check_broadcast_slot(slot)?;
         if path.is_empty() {
             return Err(KirkError::Ltx("path is empty".to_string()));

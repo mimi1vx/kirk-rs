@@ -26,7 +26,7 @@ impl SerialType {
     /// # Errors
     ///
     /// Returns [`KirkError::Communication`] for anything but `isa`/`virtio`.
-    fn parse(value: &str) -> Result<Self, KirkError> {
+    pub fn parse(value: &str) -> Result<Self, KirkError> {
         match value {
             "isa" => Ok(Self::Isa),
             "virtio" => Ok(Self::Virtio),
@@ -36,9 +36,18 @@ impl SerialType {
         }
     }
 
+    /// Option spelling used in logs and on the `QEMU` command line.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Isa => "isa",
+            Self::Virtio => "virtio",
+        }
+    }
+
     /// Guest device node used for file transport.
     #[must_use]
-    fn transport_dev(self) -> &'static str {
+    pub fn transport_dev(self) -> &'static str {
         match self {
             Self::Isa => "/dev/ttyS1",
             Self::Virtio => "/dev/vport1p1",
@@ -47,7 +56,7 @@ impl SerialType {
 
     /// Guest console name for `-append console=`.
     #[must_use]
-    fn console(self) -> &'static str {
+    pub fn console(self) -> &'static str {
         match self {
             Self::Isa => "ttyS0",
             Self::Virtio => "hvc0",
@@ -63,31 +72,31 @@ impl SerialType {
 )]
 pub struct QemuConfig {
     /// Host directory for `ttyS0` logs and transport files.
-    tmpdir: String,
+    pub tmpdir: String,
     /// Guest disk image.
-    image: Option<String>,
+    pub image: Option<String>,
     /// Guest kernel image.
-    kernel: Option<String>,
+    pub kernel: Option<String>,
     /// Guest initrd image.
-    initrd: Option<String>,
+    pub initrd: Option<String>,
     /// Login user (no login step when `None`).
-    pub(crate) user: Option<String>,
+    pub user: Option<String>,
     /// Login password.
-    pub(crate) password: Option<String>,
+    pub password: Option<String>,
     /// Shell prompt to expect after login.
-    pub(crate) prompt: String,
+    pub prompt: String,
     /// Guest architecture (`qemu-system-<system>`).
-    system: String,
+    pub system: String,
     /// Guest RAM (e.g. `2G`).
-    ram: String,
+    pub ram: String,
     /// Guest CPU count.
-    smp: String,
+    pub smp: String,
     /// Serial transport type.
-    serial: SerialType,
+    pub serial: SerialType,
     /// Host directory shared via `virtfs`.
-    pub(crate) virtfs: Option<String>,
+    pub virtfs: Option<String>,
     /// Extra user-defined `QEMU` options (shell-word split, never shelled out).
-    options: Option<String>,
+    pub options: Option<String>,
 }
 
 impl QemuConfig {
@@ -157,7 +166,7 @@ impl QemuConfig {
 
     /// `qemu-system-<arch>` binary name.
     #[must_use]
-    fn qemu_cmd(&self) -> String {
+    pub fn qemu_cmd(&self) -> String {
         format!("qemu-system-{}", self.system)
     }
 
@@ -165,7 +174,7 @@ impl QemuConfig {
     ///
     /// The file side is per-process so concurrent sessions never share it.
     #[must_use]
-    pub(crate) fn transport(&self, pid: u32) -> (&'static str, String) {
+    pub fn transport(&self, pid: u32) -> (&'static str, String) {
         (
             self.serial.transport_dev(),
             format!("{}/transport-{pid}", self.tmpdir),

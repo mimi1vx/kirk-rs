@@ -60,7 +60,7 @@ fn secs(value: u64) -> f64 {
 ///
 /// Never panics; pure function over its arguments.
 #[must_use]
-fn select_ui(workers: usize, verbose: bool) -> UiKind {
+pub fn select_ui(workers: usize, verbose: bool) -> UiKind {
     if workers > 1 {
         UiKind::Parallel
     } else if verbose {
@@ -109,7 +109,7 @@ fn builtin_template(name: &str, id: &str) -> Option<Box<dyn ComChannel>> {
 /// # Errors
 ///
 /// Returns [`KirkError::Session`] when the skip file cannot be read.
-async fn get_skip_tests(
+pub async fn get_skip_tests(
     skip_tests: Option<&str>,
     skip_file: Option<&str>,
 ) -> Result<String, KirkError> {
@@ -138,7 +138,7 @@ async fn get_skip_tests(
 /// # Errors
 ///
 /// Returns [`KirkError::Session`] when the folder does not exist.
-fn resolve_restore(path: Option<&str>) -> Result<Option<String>, KirkError> {
+pub fn resolve_restore(path: Option<&str>) -> Result<Option<String>, KirkError> {
     let Some(path) = path.filter(|p| !p.is_empty()) else {
         return Ok(None);
     };
@@ -215,7 +215,7 @@ pub struct CliSut {
 impl CliSut {
     /// Wrap a shared SUT, caching the sync accessors.
     #[must_use]
-    fn new(sut: SutHandle) -> Self {
+    pub fn new(sut: SutHandle) -> Self {
         let (name, parallel) = sut.try_lock().map_or_else(
             |_| (String::from("default"), true),
             |guard| {

@@ -17,45 +17,45 @@ use kirk_core::KirkError;
 use zeroize::Zeroizing;
 
 /// Default SSH host, mirroring upstream.
-pub(crate) const DEFAULT_HOST: &str = "localhost";
+pub const DEFAULT_HOST: &str = "localhost";
 /// Default SSH user, mirroring upstream.
-pub(crate) const DEFAULT_USER: &str = "root";
+pub const DEFAULT_USER: &str = "root";
 /// Default SSH port, mirroring upstream.
-pub(crate) const DEFAULT_PORT: u16 = 22;
+pub const DEFAULT_PORT: u16 = 22;
 /// Default known-hosts path, mirroring upstream.
-pub(crate) const DEFAULT_KNOWN_HOSTS: &str = "~/.ssh/known_hosts";
+pub const DEFAULT_KNOWN_HOSTS: &str = "~/.ssh/known_hosts";
 /// Fallback session count when the `MaxSessions` probe fails, mirroring upstream.
-pub(crate) const DEFAULT_MAX_SESSIONS: usize = 10;
+pub const DEFAULT_MAX_SESSIONS: usize = 10;
 /// Cap on bytes collected by `fetch_file`; upstream has none, this bounds memory.
-pub(crate) const FETCH_SIZE_CAP: usize = 16 * 1024 * 1024;
+pub const FETCH_SIZE_CAP: usize = 16 * 1024 * 1024;
 /// Timeout for TCP dial, authentication, channel open/exec and disconnect.
-pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(10);
+pub const IO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for the `MaxSessions` probe and for `ping`.
-pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Timeout for the local `reset_cmd` spawned by `stop`.
-pub(crate) const RESET_TIMEOUT: Duration = Duration::from_secs(10);
+pub const RESET_TIMEOUT: Duration = Duration::from_secs(10);
 /// Remote output marker that raises [`KirkError::KernelPanic`], mirroring upstream.
-const PANIC_MARKER: &str = "Kernel panic";
+pub const PANIC_MARKER: &str = "Kernel panic";
 
 /// Validated SSH channel configuration.
 #[derive(Clone)]
 pub struct SshConfig {
     /// Remote host.
-    pub(crate) host: String,
+    pub host: String,
     /// Login user.
-    pub(crate) user: String,
+    pub user: String,
     /// Private key path, when key authentication is used.
-    pub(crate) key_file: Option<String>,
+    pub key_file: Option<String>,
     /// Password for password auth (or key decryption). Zeroized on drop.
-    pub(crate) password: Option<Zeroizing<String>>,
+    pub password: Option<Zeroizing<String>>,
     /// TCP port, always `1..=65535`.
-    pub(crate) port: u16,
+    pub port: u16,
     /// Local command run by `stop` to reset the target.
-    pub(crate) reset_cmd: Option<String>,
+    pub reset_cmd: Option<String>,
     /// Whether remote commands run under `sudo /bin/sh -c`.
-    pub(crate) sudo: bool,
+    pub sudo: bool,
     /// Expanded known-hosts path. Host-key verification is always on.
-    pub(crate) known_hosts: String,
+    pub known_hosts: String,
 }
 
 impl std::fmt::Debug for SshConfig {
@@ -117,7 +117,7 @@ fn parse_sudo(raw: Option<&str>) -> Result<bool, KirkError> {
 ///
 /// Returns [`KirkError::Communication`] when the path is `/dev/null` or
 /// `~` cannot be expanded.
-fn expand_known_hosts(raw: &str, home: Option<&str>) -> Result<String, KirkError> {
+pub fn expand_known_hosts(raw: &str, home: Option<&str>) -> Result<String, KirkError> {
     if raw == "/dev/null" {
         return Err(KirkError::Communication(String::from(
             "known_hosts '/dev/null' disables host-key verification; refusing",
@@ -151,7 +151,7 @@ impl SshConfig {
         clippy::implicit_hasher,
         reason = "mirrors Plugin::setup, which passes HashMap<String, String>"
     )]
-    pub(crate) fn from_map(cfg: &HashMap<String, String>) -> Result<Self, KirkError> {
+    pub fn from_map(cfg: &HashMap<String, String>) -> Result<Self, KirkError> {
         let raw_port = nonempty(cfg, "port");
         let raw_sudo = nonempty(cfg, "sudo");
         let raw_known = nonempty(cfg, "known_hosts");
@@ -174,7 +174,7 @@ impl SshConfig {
 
 /// POSIX single-quote a value for remote-shell interpolation.
 #[must_use]
-pub(crate) fn quote_sh(value: &str) -> String {
+pub fn quote_sh(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -198,7 +198,7 @@ fn valid_env_name(name: &str) -> bool {
     clippy::implicit_hasher,
     reason = "mirrors ComChannel::run_command, which passes HashMap<String, String>"
 )]
-pub(crate) fn build_remote_command(
+pub fn build_remote_command(
     cmd: &str,
     cwd: Option<&str>,
     env: Option<&HashMap<String, String>>,
@@ -237,7 +237,7 @@ pub(crate) fn build_remote_command(
 /// `sshd_config` form (`MaxSessions N`) and the `sshd -T` form
 /// (`maxsessions N`). Returns `None` when no line matches.
 #[must_use]
-pub(crate) fn parse_max_sessions(output: &str) -> Option<usize> {
+pub fn parse_max_sessions(output: &str) -> Option<usize> {
     for line in output.lines() {
         let line = line.trim();
         let rest = line
@@ -266,12 +266,12 @@ pub struct OutputCollector {
 impl OutputCollector {
     /// Create an empty collector.
     #[must_use]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Append a chunk, updating panic detection.
-    pub(crate) fn push(&mut self, chunk: &str) {
+    pub fn push(&mut self, chunk: &str) {
         if self.panic {
             self.buf.push_str(chunk);
             return;
@@ -292,13 +292,13 @@ impl OutputCollector {
 
     /// Whether [`PANIC_MARKER`] has been seen.
     #[must_use]
-    fn panicked(&self) -> bool {
+    pub fn panicked(&self) -> bool {
         self.panic
     }
 
     /// Consume into `(output, panicked)`.
     #[must_use]
-    pub(crate) fn finish(self) -> (String, bool) {
+    pub fn finish(self) -> (String, bool) {
         (self.buf, self.panic)
     }
 }
@@ -308,7 +308,7 @@ impl OutputCollector {
 /// # Errors
 ///
 /// Returns [`KirkError::Communication`] on unterminated quotes.
-pub(crate) fn split_argv(cmd: &str) -> Result<Vec<String>, KirkError> {
+pub fn split_argv(cmd: &str) -> Result<Vec<String>, KirkError> {
     let mut argv = Vec::new();
     let mut current = String::new();
     let mut in_arg = false;

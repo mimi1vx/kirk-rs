@@ -149,7 +149,7 @@ impl Suite {
     /// # Errors
     ///
     /// Returns [`KirkError::Framework`] when `value` is empty.
-    fn set_name(&mut self, value: &str) -> Result<(), KirkError> {
+    pub fn set_name(&mut self, value: &str) -> Result<(), KirkError> {
         if value.is_empty() {
             return Err(KirkError::Framework("empty suite name".to_owned()));
         }

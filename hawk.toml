@@ -1,7 +1,18 @@
-# Hawk configuration: the shipped `kirk` binary is the sole production target.
-# No `--exclude-crate` entries: channels (kirk-com-*) are statically linked
-# into the binary (see AGENTS.md) and no workspace crate is consumed
-# externally, so every library crate stays in the diagnostic surface.
+# Hawk configuration for the kirk-rs workspace.
+#
+# Production surface: the shipped `kirk` binary is the only production
+# target. Channels (`kirk-com-*`) are statically linked into it (see
+# AGENTS.md) and no workspace crate is consumed externally, so every library
+# crate stays in the diagnostic surface.
+#
+# Findings are advisory: do NOT bulk-apply `hawk check --fix`. Most findings
+# are items whose only callers are unit tests; reducing them from `pub` to
+# `pub(crate)`/private activates rustc's `dead_code` lint under CI's
+# `cargo clippy --workspace --all-targets -- -D warnings` (test-only uses do
+# not count for normal builds), and narrowing doc-linked constants breaks
+# `cargo doc` under `RUSTDOCFLAGS=-D warnings`. Triage findings individually:
+# keep ported upstream API `pub`, delete only what has no callers and no
+# upstream counterpart.
 [[production]]
 package = "kirk-cli"
 bin = "kirk"

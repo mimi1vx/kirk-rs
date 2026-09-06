@@ -79,7 +79,7 @@ impl StdoutBuffer {
 
     /// Current captured contents.
     #[must_use]
-    async fn snapshot(&self) -> String {
+    pub async fn snapshot(&self) -> String {
         self.inner.lock().await.clone()
     }
 }
@@ -240,15 +240,22 @@ where
         }
     }
 
+    /// Use `events` instead of the default empty registry.
+    #[must_use]
+    pub fn with_events(mut self, events: EventRegistry) -> Self {
+        self.events = events;
+        self
+    }
+
     /// Execution timeout in seconds (`0.0` means disabled).
     #[must_use]
-    pub(crate) fn test_timeout(&self) -> f64 {
+    pub fn test_timeout(&self) -> f64 {
         self.test_timeout
     }
 
     /// Maximum number of parallel workers.
     #[must_use]
-    pub(crate) fn max_workers(&self) -> usize {
+    pub fn max_workers(&self) -> usize {
         self.max_workers
     }
 
@@ -266,7 +273,7 @@ where
 
     /// Borrow the event registry.
     #[must_use]
-    pub(crate) fn events(&self) -> &EventRegistry {
+    pub fn events(&self) -> &EventRegistry {
         &self.events
     }
 

@@ -17,21 +17,21 @@ use regex::Regex;
 pub const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Cap for `ltp.json` metadata bytes accepted by `find_suite`.
-pub(crate) const MAX_METADATA_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_METADATA_BYTES: usize = 8 * 1024 * 1024;
 
 /// Parsed `TPASS`/`TFAIL`/`TBROK`/`TSKIP`/`TWARN` counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Counts {
     /// Number of passed tests.
-    pub(crate) passed: u32,
+    pub passed: u32,
     /// Number of failed tests.
-    pub(crate) failed: u32,
+    pub failed: u32,
     /// Number of broken tests.
-    pub(crate) broken: u32,
+    pub broken: u32,
     /// Number of skipped tests.
-    pub(crate) skipped: u32,
+    pub skipped: u32,
     /// Number of warnings.
-    pub(crate) warnings: u32,
+    pub warnings: u32,
 }
 
 fn cmd_matcher() -> &'static Regex {
@@ -51,7 +51,7 @@ fn cmd_matcher() -> &'static Regex {
 /// Panics only if the static matcher fails to compile, which cannot happen
 /// for a literal pattern.
 #[must_use]
-pub(crate) fn split_cmd_args(line: &str) -> Vec<String> {
+pub fn split_cmd_args(line: &str) -> Vec<String> {
     cmd_matcher()
         .find_iter(line)
         .map(|mat| mat.as_str().to_owned())
@@ -72,7 +72,7 @@ fn ansi_escape() -> &'static Regex {
 /// Panics only if the static pattern fails to compile, which cannot happen
 /// for a literal pattern.
 #[must_use]
-pub(crate) fn strip_ansi(stdout: &str) -> String {
+pub fn strip_ansi(stdout: &str) -> String {
     ansi_escape().replace_all(stdout, "").into_owned()
 }
 
@@ -93,7 +93,7 @@ fn summary_pattern() -> &'static Regex {
 /// Panics only if the static pattern fails to compile, which cannot happen
 /// for a literal pattern.
 #[must_use]
-pub(crate) fn parse_summary(stdout: &str) -> Option<Counts> {
+pub fn parse_summary(stdout: &str) -> Option<Counts> {
     let captures = summary_pattern().captures(stdout)?;
     let get = |name: &str| -> Option<u32> { captures.name(name)?.as_str().parse::<u32>().ok() };
     Some(Counts {
@@ -107,7 +107,7 @@ pub(crate) fn parse_summary(stdout: &str) -> Option<Counts> {
 
 /// Count `TPASS`/`TFAIL`/`TBROK`/`TSKIP`/`TWARN` markers via substring scan.
 #[must_use]
-pub(crate) fn count_markers(stdout: &str) -> Counts {
+pub fn count_markers(stdout: &str) -> Counts {
     let count = |marker: &str| u32::try_from(stdout.matches(marker).count()).unwrap_or(u32::MAX);
     Counts {
         passed: count("TPASS"),
@@ -120,7 +120,7 @@ pub(crate) fn count_markers(stdout: &str) -> Counts {
 
 /// Map an LTP return code to a [`ResultStatus`], mirroring `_RETCODE_STATUS`.
 #[must_use]
-pub(crate) fn retcode_status(retcode: i32) -> i32 {
+pub fn retcode_status(retcode: i32) -> i32 {
     match retcode {
         0 => ResultStatus::PASS,
         2 | -1 => ResultStatus::BROK,
@@ -139,7 +139,7 @@ pub(crate) fn retcode_status(retcode: i32) -> i32 {
 ///
 /// Returns [`KirkError::Framework`] when `name` contains a separator,
 /// parent reference, or NUL byte.
-pub(crate) fn validate_suite_name(name: &str) -> Result<(), KirkError> {
+pub fn validate_suite_name(name: &str) -> Result<(), KirkError> {
     if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains("..") {
         return Err(KirkError::Framework(format!(
             "invalid suite name: {name:?}"
@@ -150,7 +150,7 @@ pub(crate) fn validate_suite_name(name: &str) -> Result<(), KirkError> {
 
 /// Truncate `stdout` to [`MAX_STDOUT_BYTES`] on a char boundary.
 #[must_use]
-pub(crate) fn truncate_stdout(stdout: &str) -> &str {
+pub fn truncate_stdout(stdout: &str) -> &str {
     if stdout.len() <= MAX_STDOUT_BYTES {
         stdout
     } else {

@@ -30,9 +30,9 @@ use crate::request::{Field, Frame, OP_ERROR, Reply, Request};
 /// Read chunk size, mirroring Python `LTX.BUFFSIZE`.
 pub(crate) const READ_CHUNK: usize = 1 << 21;
 /// Maximum buffered-but-undecoded bytes; bounds transient allocations.
-const MAX_BUFFERED_BYTES: usize = 8 << 20;
+pub(crate) const MAX_BUFFERED_BYTES: usize = 8 << 20;
 /// Maximum msgpack nesting depth accepted while decoding.
-const MAX_DECODE_DEPTH: usize = 4;
+pub(crate) const MAX_DECODE_DEPTH: usize = 4;
 /// Delay between reply polls, mirroring the Python `asyncio.sleep(0.005)`.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -234,7 +234,7 @@ impl Ltx {
 
     /// Whether the poll task is running.
     #[must_use]
-    pub(crate) fn connected(&self) -> bool {
+    pub fn connected(&self) -> bool {
         self.shared.running.load(Ordering::SeqCst)
     }
 
@@ -305,7 +305,7 @@ impl Ltx {
     ///
     /// Returns [`KirkError::Ltx`] when no requests are given, when not
     /// connected, or when packing/writing fails.
-    async fn send(&self, requests: Vec<Request>) -> Result<Vec<u64>, KirkError> {
+    pub async fn send(&self, requests: Vec<Request>) -> Result<Vec<u64>, KirkError> {
         if requests.is_empty() {
             return Err(KirkError::Ltx("No requests given".to_string()));
         }
@@ -543,9 +543,9 @@ pub(crate) mod test_support {
     /// Create a FIFO pair; files are removed by the caller via [`Fifos::cleanup`].
     pub(crate) struct Fifos {
         /// Path the client writes to.
-        pub(crate) infile: PathBuf,
+        pub infile: PathBuf,
         /// Path the client reads from.
-        pub(crate) outfile: PathBuf,
+        pub outfile: PathBuf,
     }
 
     impl Fifos {

@@ -32,10 +32,10 @@ use tokio::io::AsyncReadExt as _;
 use tokio::process::Command;
 
 /// Cap for combined stdout+stderr bytes kept per [`ComChannel::run_command`].
-const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Cap for bytes returned by [`ComChannel::fetch_file`].
-const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
 
 /// Chunk size for streaming child output.
 const READ_CHUNK: usize = 8192;

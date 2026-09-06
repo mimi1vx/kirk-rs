@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use crate::io::AsyncFile;
 
 /// Event types handled by [`JSONFileMonitor`], in upstream order.
-const EVENT_TYPES: &[&str] = &[
+pub const EVENT_TYPES: &[&str] = &[
     "session_restore",
     "session_started",
     "session_stopped",
@@ -97,12 +97,18 @@ impl JSONFileMonitor {
         })
     }
 
+    /// Monitored file path.
+    #[must_use]
+    pub fn path(&self) -> PathBuf {
+        self.inner.path.clone()
+    }
+
     /// Write one `{type, message}` single-line document, overwriting the file.
     ///
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the file cannot be written.
-    async fn record(&self, msg_type: &str, message: Value) -> Result<(), KirkError> {
+    pub async fn record(&self, msg_type: &str, message: Value) -> Result<(), KirkError> {
         let mut data = Map::new();
         data.insert(String::from("type"), Value::String(msg_type.to_owned()));
         data.insert(String::from("message"), message);
@@ -166,60 +172,60 @@ impl JSONFileMonitor {
     }
 
     /// Record a `session_restore` event.
-    async fn session_restore(&self, restore: &str) -> Result<(), KirkError> {
+    pub async fn session_restore(&self, restore: &str) -> Result<(), KirkError> {
         self.record("session_restore", serde_json::json!({"restore": restore}))
             .await
     }
 
     /// Record a `session_started` event.
-    async fn session_started(&self, tmpdir: &str) -> Result<(), KirkError> {
+    pub async fn session_started(&self, tmpdir: &str) -> Result<(), KirkError> {
         self.record("session_started", serde_json::json!({"tmpdir": tmpdir}))
             .await
     }
 
     /// Record a `session_stopped` event.
-    async fn session_stopped(&self) -> Result<(), KirkError> {
+    pub async fn session_stopped(&self) -> Result<(), KirkError> {
         self.record("session_stopped", serde_json::json!({})).await
     }
 
     /// Record a `sut_stdout` event.
-    async fn sut_stdout(&self, sut: &str, data: &str) -> Result<(), KirkError> {
+    pub async fn sut_stdout(&self, sut: &str, data: &str) -> Result<(), KirkError> {
         self.record("sut_stdout", serde_json::json!({"sut": sut, "data": data}))
             .await
     }
 
     /// Record a `sut_start` event.
-    async fn sut_start(&self, sut: &str) -> Result<(), KirkError> {
+    pub async fn sut_start(&self, sut: &str) -> Result<(), KirkError> {
         self.record("sut_start", serde_json::json!({"sut": sut}))
             .await
     }
 
     /// Record a `sut_stop` event.
-    async fn sut_stop(&self, sut: &str) -> Result<(), KirkError> {
+    pub async fn sut_stop(&self, sut: &str) -> Result<(), KirkError> {
         self.record("sut_stop", serde_json::json!({"sut": sut}))
             .await
     }
 
     /// Record a `sut_restart` event.
-    async fn sut_restart(&self, sut: &str) -> Result<(), KirkError> {
+    pub async fn sut_restart(&self, sut: &str) -> Result<(), KirkError> {
         self.record("sut_restart", serde_json::json!({"sut": sut}))
             .await
     }
 
     /// Record a `sut_not_responding` event.
-    async fn sut_not_responding(&self) -> Result<(), KirkError> {
+    pub async fn sut_not_responding(&self) -> Result<(), KirkError> {
         self.record("sut_not_responding", serde_json::json!({}))
             .await
     }
 
     /// Record a `run_cmd_start` event.
-    async fn run_cmd_start(&self, cmd: &str) -> Result<(), KirkError> {
+    pub async fn run_cmd_start(&self, cmd: &str) -> Result<(), KirkError> {
         self.record("run_cmd_start", serde_json::json!({"cmd": cmd}))
             .await
     }
 
     /// Record a `run_cmd_stop` event.
-    async fn run_cmd_stop(
+    pub async fn run_cmd_stop(
         &self,
         command: &str,
         stdout: &str,
@@ -237,7 +243,7 @@ impl JSONFileMonitor {
     }
 
     /// Record a `test_stdout` event.
-    async fn test_stdout(&self, test: &Test, data: &str) -> Result<(), KirkError> {
+    pub async fn test_stdout(&self, test: &Test, data: &str) -> Result<(), KirkError> {
         self.record(
             "test_stdout",
             serde_json::json!({"test": test_dict(test), "data": data}),
@@ -246,13 +252,13 @@ impl JSONFileMonitor {
     }
 
     /// Record a `test_started` event.
-    async fn test_started(&self, test: &Test) -> Result<(), KirkError> {
+    pub async fn test_started(&self, test: &Test) -> Result<(), KirkError> {
         self.record("test_started", serde_json::json!({"test": test_dict(test)}))
             .await
     }
 
     /// Record a `test_completed` event.
-    async fn test_completed(&self, results: &TestResults) -> Result<(), KirkError> {
+    pub async fn test_completed(&self, results: &TestResults) -> Result<(), KirkError> {
         self.record(
             "test_completed",
             serde_json::json!({
@@ -271,7 +277,7 @@ impl JSONFileMonitor {
     }
 
     /// Record a `test_timed_out` event.
-    async fn test_timed_out(&self, test: &Test, timeout: f64) -> Result<(), KirkError> {
+    pub async fn test_timed_out(&self, test: &Test, timeout: f64) -> Result<(), KirkError> {
         self.record(
             "test_timed_out",
             serde_json::json!({"test": test_dict(test), "timeout": timeout}),
@@ -280,12 +286,12 @@ impl JSONFileMonitor {
     }
 
     /// Record a `suite_started` event.
-    async fn suite_started(&self, suite: &Suite) -> Result<(), KirkError> {
+    pub async fn suite_started(&self, suite: &Suite) -> Result<(), KirkError> {
         self.record("suite_started", suite_dict(suite)).await
     }
 
     /// Record a `suite_completed` event.
-    async fn suite_completed(
+    pub async fn suite_completed(
         &self,
         results: &SuiteResults,
         exec_time: f64,
@@ -315,7 +321,7 @@ impl JSONFileMonitor {
     }
 
     /// Record a `suite_timeout` event.
-    async fn suite_timeout(&self, suite: &Suite, timeout: f64) -> Result<(), KirkError> {
+    pub async fn suite_timeout(&self, suite: &Suite, timeout: f64) -> Result<(), KirkError> {
         self.record(
             "suite_timeout",
             serde_json::json!({"suite": suite_dict(suite), "timeout": timeout}),
@@ -324,24 +330,24 @@ impl JSONFileMonitor {
     }
 
     /// Record a `session_warning` event.
-    async fn session_warning(&self, msg: &str) -> Result<(), KirkError> {
+    pub async fn session_warning(&self, msg: &str) -> Result<(), KirkError> {
         self.record("session_warning", serde_json::json!({"message": msg}))
             .await
     }
 
     /// Record a `session_error` event.
-    async fn session_error(&self, error: &str) -> Result<(), KirkError> {
+    pub async fn session_error(&self, error: &str) -> Result<(), KirkError> {
         self.record("session_error", serde_json::json!({"error": error}))
             .await
     }
 
     /// Record a `kernel_panic` event.
-    async fn kernel_panic(&self) -> Result<(), KirkError> {
+    pub async fn kernel_panic(&self) -> Result<(), KirkError> {
         self.record("kernel_panic", serde_json::json!({})).await
     }
 
     /// Record a `kernel_tainted` event.
-    async fn kernel_tainted(&self, message: &str) -> Result<(), KirkError> {
+    pub async fn kernel_tainted(&self, message: &str) -> Result<(), KirkError> {
         self.record("kernel_tainted", serde_json::json!({"message": message}))
             .await
     }

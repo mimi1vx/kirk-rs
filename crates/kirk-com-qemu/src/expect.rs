@@ -14,11 +14,11 @@ use kirk_com::IOBuffer;
 use kirk_core::KirkError;
 
 /// Hard cap for one serial capture, so a chatty guest cannot `OOM` the host.
-const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 /// Hard cap for a fetched transport file.
-pub(crate) const MAX_TRANSPORT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_TRANSPORT_BYTES: u64 = 64 * 1024 * 1024;
 /// Settle delay after `Kernel panic` so the full message arrives on serial.
-pub(crate) const PANIC_SETTLE: Duration = Duration::from_secs(2);
+pub const PANIC_SETTLE: Duration = Duration::from_secs(2);
 /// Back-off when the serial has no data ready (avoids a hot spin).
 const IDLE_BACKOFF: Duration = Duration::from_millis(5);
 
@@ -37,9 +37,9 @@ pub trait SerialIo: Send {
 #[derive(Debug, Default)]
 pub struct ExpectState {
     /// Unconsumed tail from the previous wait.
-    pub(crate) pending: String,
+    pub pending: String,
     /// Set once `Kernel panic` is observed.
-    pub(crate) panicked: bool,
+    pub panicked: bool,
 }
 
 /// Tuning for [`wait_for_message`].

@@ -5,7 +5,7 @@
 //! never opened is inert: reads return `None`, writes and seeks are no-ops,
 //! and `close` is idempotent.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kirk_core::KirkError;
 use tokio::fs::{File, OpenOptions};
@@ -33,6 +33,18 @@ impl AsyncFile {
             readable: mode.contains('r') || mode.contains('+'),
             handle: None,
         }
+    }
+
+    /// Path of the file.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Whether the file is currently open.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.handle.is_some()
     }
 
     /// Open the file. A second call while open is a no-op.
@@ -83,7 +95,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the seek fails.
-    async fn seek(&mut self, pos: u64) -> Result<(), KirkError> {
+    pub async fn seek(&mut self, pos: u64) -> Result<(), KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             handle
                 .seek(std::io::SeekFrom::Start(pos))
@@ -98,7 +110,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the position cannot be read.
-    async fn tell(&mut self) -> Result<Option<u64>, KirkError> {
+    pub async fn tell(&mut self) -> Result<Option<u64>, KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             let pos = handle
                 .stream_position()
@@ -116,7 +128,7 @@ impl AsyncFile {
     ///
     /// Returns [`KirkError::Session`] when the read fails or the content is
     /// not valid UTF-8.
-    async fn read(&mut self, size: i64) -> Result<Option<String>, KirkError> {
+    pub async fn read(&mut self, size: i64) -> Result<Option<String>, KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             if size < 0 {
                 let mut text = String::new();
@@ -154,7 +166,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the read fails.
-    async fn readline(&mut self) -> Result<Option<String>, KirkError> {
+    pub async fn readline(&mut self) -> Result<Option<String>, KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             let mut line = String::new();
             handle
@@ -203,7 +215,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the write fails.
-    async fn write_bytes(&mut self, data: &[u8]) -> Result<(), KirkError> {
+    pub async fn write_bytes(&mut self, data: &[u8]) -> Result<(), KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             handle
                 .write_all(data)
@@ -219,7 +231,7 @@ impl AsyncFile {
     /// # Errors
     ///
     /// Returns [`KirkError::Session`] when the read fails.
-    async fn read_bytes(&mut self, size: i64) -> Result<Option<Vec<u8>>, KirkError> {
+    pub async fn read_bytes(&mut self, size: i64) -> Result<Option<Vec<u8>>, KirkError> {
         if let Some(handle) = self.handle.as_mut() {
             if size < 0 {
                 let mut buf = Vec::new();
