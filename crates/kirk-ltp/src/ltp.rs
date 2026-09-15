@@ -226,42 +226,26 @@ impl LtpFramework {
 
     /// Whether a test with `max_runtime` metadata survives filtering.
     ///
-    /// # Errors
-    ///
-    /// Returns [`KirkError::Framework`] when `max_runtime` is a string or
-    /// number that cannot be interpreted as a float.
-    fn is_addable(&self, params: &Map<String, Value>) -> Result<bool, KirkError> {
+    /// Mirrors upstream's `ValueError`/`TypeError` handling: metadata that
+    /// cannot be converted to a finite number keeps the test instead of
+    /// aborting suite discovery.
+    fn is_addable(&self, params: &Map<String, Value>) -> bool {
         if self.max_runtime == 0.0 {
-            return Ok(true);
+            return true;
         }
         let Some(runtime) = params.get("max_runtime") else {
-            return Ok(true);
+            return true;
         };
         if runtime.is_null() {
-            return Ok(true);
+            return true;
         }
         let value = match runtime {
-            Value::Number(number) => number.as_f64().ok_or_else(|| {
-                KirkError::Framework(format!(
-                    "metadata contains wrong max_runtime value: {number}"
-                ))
-            })?,
-            Value::String(text) => text.parse::<f64>().map_err(|_| {
-                KirkError::Framework(format!("metadata contains wrong max_runtime value: {text}"))
-            })?,
-            Value::Bool(flag) => {
-                if *flag {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            _ => return Ok(true),
+            Value::Number(number) => number.as_f64(),
+            Value::String(text) => text.parse::<f64>().ok(),
+            Value::Bool(flag) => Some(if *flag { 1.0 } else { 0.0 }),
+            _ => None,
         };
-        if value >= self.max_runtime {
-            return Ok(false);
-        }
-        Ok(true)
+        !matches!(value, Some(value) if value >= self.max_runtime)
     }
 
     /// Parse a runtest file into a [`Suite`], mirroring `_read_runtest`.
@@ -302,7 +286,7 @@ impl LtpFramework {
             if let Some(known) = metadata_tests
                 && let Some(Value::Object(params)) = known.get(test_name.as_str())
             {
-                if !self.is_addable(params)? {
+                if !self.is_addable(params) {
                     continue;
                 }
                 parallelizable = PARALLEL_BLACKLIST
@@ -548,16 +532,38 @@ mod tests {
         let framework = LtpFramework::with_root("/opt/ltp", 5.0, 30.0);
         let params: Map<String, Value> =
             serde_json::from_value(serde_json::json!({"max_runtime": "10"})).unwrap();
-        assert!(!framework.is_addable(&params).unwrap());
+        assert!(!framework.is_addable(&params));
         let params: Map<String, Value> =
             serde_json::from_value(serde_json::json!({"max_runtime": "2"})).unwrap();
-        assert!(framework.is_addable(&params).unwrap());
+        assert!(framework.is_addable(&params));
         let params: Map<String, Value> = serde_json::from_value(serde_json::json!({})).unwrap();
-        assert!(framework.is_addable(&params).unwrap());
+        assert!(framework.is_addable(&params));
 
         let unfiltered = LtpFramework::with_root("/opt/ltp", 0.0, 30.0);
         let params: Map<String, Value> =
             serde_json::from_value(serde_json::json!({"max_runtime": "999"})).unwrap();
-        assert!(unfiltered.is_addable(&params).unwrap());
+        assert!(unfiltered.is_addable(&params));
+    }
+
+    #[test]
+    fn max_runtime_malformed_metadata_keeps_test() {
+        let framework = LtpFramework::with_root("/opt/ltp", 5.0, 30.0);
+        for metadata in [
+            serde_json::json!({"max_runtime": "not-a-number"}),
+            serde_json::json!({"max_runtime": ""}),
+            serde_json::json!({"max_runtime": {}}),
+            serde_json::json!({"max_runtime": []}),
+        ] {
+            let params: Map<String, Value> = serde_json::from_value(metadata.clone()).unwrap();
+            assert!(
+                framework.is_addable(&params),
+                "malformed max_runtime {metadata:?} must keep the test"
+            );
+        }
+
+        // Still filters valid values at or above the limit.
+        let params: Map<String, Value> =
+            serde_json::from_value(serde_json::json!({"max_runtime": 5.0})).unwrap();
+        assert!(!framework.is_addable(&params));
     }
 }
