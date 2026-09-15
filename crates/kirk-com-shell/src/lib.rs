@@ -470,6 +470,11 @@ impl ComChannel for ShellChannel {
             inner: Arc::new(Inner::default()),
         })
     }
+
+    /// Share the live session via [`Clone`] so concurrent workers overlap.
+    fn concurrent_handle(&self) -> Option<Box<dyn ComChannel>> {
+        Some(Box::new(self.clone()))
+    }
 }
 
 #[cfg(test)]
