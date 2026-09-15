@@ -10,7 +10,7 @@ Kirk is an all-in-one Linux testing framework. This repository is a Rust workspa
 | `kirk-core` | Shared `Test`/`Suite` types, result counters, error enum |
 | `kirk-plugin` | Minimal `Plugin` trait (setup, config help, boxed clone) |
 | `kirk-com` | `ComChannel` trait plus the in-process channel registry |
-| `kirk-com-shell` | Local process execution channel |
+| `kirk-com-shell` | Local shell execution channel (`/bin/sh -c`) |
 | `kirk-com-ssh` | SSH execution channel |
 | `kirk-com-qemu` | QEMU guest-serial execution channel |
 | `kirk-com-ltx` | LTX msgpack-over-FIFO execution channel |
@@ -42,6 +42,12 @@ cargo run -p kirk-cli -- --help
 kirk [OPTIONS]
 ```
 
+The console UI mode follows `--workers` and `--verbose`: more than one
+worker selects the parallel UI (per-test progress counters, e.g. `(2/5)`),
+otherwise `--verbose` selects the verbose UI (full command plus a
+pass/fail/broken/skipped/warning summary per test), and the default is the
+simple UI (one line per test).
+
 General options:
 
 - `-v, --verbose`: verbose output.
@@ -66,8 +72,8 @@ Execution options:
 - `-T, --suite-timeout <SUITE_TIMEOUT>`: per-suite timeout (default `1h`).
 - `-t, --exec-timeout <EXEC_TIMEOUT>`: per-execution timeout (default `1h`). Durations accept `30s`, `4m`, `5h`, `20d`; a bare number means seconds.
 - `-R, --randomize`: randomize test execution order.
-- `-I, --runtime <RUNTIME>`: session runtime (default `0`, meaning run once). Accepts the same duration format as the timeouts.
-- `-i, --suite-iterate <SUITE_ITERATE>`: repeat suites N times (default `1`); repeats are named `suite[i]`.
+- `-I, --runtime <RUNTIME>`: session runtime (default `0`, meaning run once). Accepts the same duration format as the timeouts. Repeated rounds are named `suite[1]`, `suite[2]`, ... (1-based).
+- `-i, --suite-iterate <SUITE_ITERATE>`: repeat suites N times (default `1`); repeats are named `suite[0]`, `suite[1]`, ... (0-based).
 - `-w, --workers <WORKERS>`: parallel workers (default `1`).
 - `-W, --force-parallel`: force parallel execution of all tests.
 - `-F, --fault-injection <FAULT_INJECTION>`: fault-injection probability `0-100` (default `0`).
@@ -87,7 +93,7 @@ All channels are statically linked into the `kirk` binary. (Dynamic channel plug
 	<name>:<param1>=<value1>:<param2>=<value2>:..
 ```
 
-The `shell` channel runs commands locally and takes no configuration. The `ssh`, `qemu`, and `ltx` channels take per-channel parameters; see each channel's `config_help` via `--com help`.
+The `shell` channel runs commands locally through `/bin/sh -c` (matching upstream's `asyncio.create_subprocess_shell`), so runtest entries and probes may use expansion, `&&`, pipelines, and redirection; it takes no configuration. The `ssh`, `qemu`, and `ltx` channels take per-channel parameters; see each channel's `config_help` via `--com help`.
 
 `--sut help` reports the SUTs wired into the CLI. The `default` SUT takes one key:
 
@@ -107,7 +113,13 @@ Timeouts: a per-test expiry records a timeout result; a kernel timeout also trig
 
 ## Sessions, restore, and reports
 
-Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. When tests execute, the session writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` receives the latest event as one JSON object per rewrite. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
+Each run appends `suite::test` lines to an `executed` file under the session temp dir. `--restore <dir>` reads that file and skips already-executed tests. When tests execute, the session writes `results.json` into the session temp dir and additionally to `--json-report` when given. `--monitor` rewrites a single-line `{"type", "message"}` JSON document on every event, one schema per event type (matching upstream's `_test_to_dict`/`_suite_to_dict` shapes) — the file always reflects only the most recent event. Kernel panic, taint, and SUT-not-responding conditions are reported as events and reflected in results.
+
+## Intentional differences from upstream
+
+- **Static channels only**, no `--plugins` flag (see "Channels and SUTs" above for why dynamic loading was removed).
+- **Independent versioning.** This crate's version is not kept in sync with upstream's Python package version.
+- **Additional hardening kept over upstream:** path validation (traversal rejection) on fetched files and the JSON monitor/report paths, output-size caps on captured command output and fetched files, SSH host-key verification, and safer error boundaries. These are only relaxed when a compatibility test proves they block required behavior (e.g. the `shell` channel's move to real `/bin/sh -c` execution).
 
 ## Exit codes
 
