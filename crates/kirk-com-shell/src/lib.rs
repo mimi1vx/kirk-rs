@@ -1,28 +1,30 @@
 //! Shell communication channel ported from `kirk/libkirk/channels/shell.py`.
 //!
 //! [`ShellChannel`] mirrors upstream `ShellComChannel`: `communicate` flips an
-//! active flag, `stop` kills every tracked process group, `run_command`
-//! spawns argv directly, and `fetch_file` reads a local path.
+//! active flag, `stop` kills every tracked process group, `run_command` runs
+//! `command` through `/bin/sh -c` exactly like `asyncio.create_subprocess_shell`,
+//! and `fetch_file` reads a local path.
 //!
 //! # Security
 //!
-//! argv-exec only: `run_command` splits `command` into words and spawns them
-//! with [`tokio::process::Command`]. No shell is ever invoked, so there is no
-//! expansion, redirection, or pipelines. Commands relying on shell syntax
-//! (unquoted `|`, `>`, `<`, `;`, `&`, backticks, `$()`/`$VAR`, `(`, `)`) are
-//! rejected with [`KirkError::Communication`] instead of silently
-//! misbehaving, which would invalidate test runs.
+//! `command` is interpreted by `/bin/sh`, matching upstream: builtin SUT
+//! probes and LTP runtest entries rely on expansion, `&&`, pipelines, and
+//! redirection that argv-exec cannot represent. `command` is never built
+//! from untrusted external input at this layer — it comes from configured
+//! probes and runtest files the operator already trusts to run on the SUT.
 //!
 //! # Bounds
 //!
-//! Combined stdout+stderr per command is capped at `MAX_OUTPUT_BYTES`;
-//! `fetch_file` is capped at `MAX_FETCH_BYTES`. Past the cap the child is
+//! Combined stdout+stderr per command is capped at `MAX_OUTPUT_BYTES`
+//! (stderr is dup'd onto the stdout fd before exec, so both share one pipe
+//! and one cap, like upstream's `stderr=STDOUT`); `fetch_file` is capped at
+//! `MAX_FETCH_BYTES`. Past the output cap the child's process group is
 //! killed and the call fails, so a runaway command cannot OOM the runner.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use kirk_com::{CmdResult, ComChannel, IOBuffer};
@@ -158,96 +160,6 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
     }
 }
 
-/// Split `command` into argv words.
-///
-/// Handles single/double quotes and backslash escapes; unquoted shell control
-/// operators are rejected (see module docs) instead of being executed
-/// literally with surprising results.
-///
-/// # Errors
-///
-/// Returns [`KirkError::Communication`] when the command is empty, has an
-/// unclosed quote, or relies on shell syntax.
-fn split_argv(command: &str) -> Result<Vec<String>, KirkError> {
-    let shell_syntax = || {
-        KirkError::Communication(String::from(
-            "shell syntax is not supported; pass plain argv words",
-        ))
-    };
-    let mut args = Vec::new();
-    let mut current = String::new();
-    let mut in_arg = false;
-    let mut quote: Option<char> = None;
-    let mut chars = command.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if let Some(open) = quote {
-            if ch == open {
-                quote = None;
-            } else if open == '"' && ch == '\\' {
-                match chars.next() {
-                    Some(escaped) => current.push(escaped),
-                    None => current.push('\\'),
-                }
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
-        match ch {
-            '\'' | '"' => {
-                quote = Some(ch);
-                in_arg = true;
-            }
-            c if c.is_whitespace() => {
-                if in_arg {
-                    args.push(std::mem::take(&mut current));
-                    in_arg = false;
-                }
-            }
-            '\\' => {
-                if let Some(escaped) = chars.next() {
-                    current.push(escaped);
-                } else {
-                    current.push('\\');
-                }
-                in_arg = true;
-            }
-            '|' | ';' | '`' | '>' | '<' | '&' | '(' | ')' => return Err(shell_syntax()),
-            '$' => {
-                let substitution = matches!(
-                    chars.peek(),
-                    Some(next)
-                        if next.is_alphanumeric()
-                            || matches!(next, '_' | '{' | '(' | '*' | '?' | '#' | '$' | '-' | '!' | '@')
-                );
-                if substitution {
-                    return Err(shell_syntax());
-                }
-                current.push(ch);
-                in_arg = true;
-            }
-            _ => {
-                current.push(ch);
-                in_arg = true;
-            }
-        }
-    }
-
-    if quote.is_some() {
-        return Err(KirkError::Communication(String::from(
-            "unclosed quote in command",
-        )));
-    }
-    if in_arg {
-        args.push(current);
-    }
-    if args.is_empty() {
-        return Err(KirkError::Communication(String::from("command is empty")));
-    }
-    Ok(args)
-}
-
 /// Check the bytes appended by the latest chunk for the panic marker.
 ///
 /// Only the overlap region is scanned, so streaming stays linear.
@@ -257,51 +169,6 @@ fn tail_contains_panic(text: &str, new_bytes: usize) -> bool {
         .saturating_sub(new_bytes + KERNEL_PANIC_MARKER.len());
     let from = text.floor_char_boundary(from);
     text[from..].contains(KERNEL_PANIC_MARKER)
-}
-
-/// Byte-level variant of [`tail_contains_panic`] for the stderr buffer.
-fn bytes_tail_contains_panic(buf: &[u8], new_bytes: usize) -> bool {
-    let needle = KERNEL_PANIC_MARKER.as_bytes();
-    let from = buf.len().saturating_sub(new_bytes + needle.len());
-    buf[from..]
-        .windows(needle.len())
-        .any(|window| window == needle)
-}
-
-/// Drain `pipe` to EOF, counting bytes against the shared `used` budget.
-///
-/// Past the cap the child group is killed and the rest is discarded, keeping
-/// memory bounded while letting the child reach EOF so [`tokio::process`]
-/// reaping never deadlocks.
-async fn drain_pipe<R>(
-    mut pipe: R,
-    pid: u32,
-    used: &AtomicUsize,
-    over_cap: &AtomicBool,
-    saw_panic: &AtomicBool,
-) -> std::io::Result<Vec<u8>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut bytes = Vec::new();
-    let mut chunk = vec![0u8; READ_CHUNK];
-    loop {
-        let n = pipe.read(&mut chunk).await?;
-        if n == 0 {
-            break;
-        }
-        let total = used.fetch_add(n, Ordering::SeqCst) + n;
-        if total > MAX_OUTPUT_BYTES {
-            over_cap.store(true, Ordering::SeqCst);
-            kill_process_group(pid);
-            continue;
-        }
-        bytes.extend_from_slice(&chunk[..n]);
-        if bytes_tail_contains_panic(&bytes, n) {
-            saw_panic.store(true, Ordering::SeqCst);
-        }
-    }
-    Ok(bytes)
 }
 
 /// Read a file with a size cap, run off-thread so the runtime never blocks.
@@ -423,9 +290,10 @@ impl ComChannel for ShellChannel {
         }
     }
 
-    /// Run `command` as argv and return its result.
+    /// Run `command` through `/bin/sh -c` and return its result.
     ///
-    /// Stdout and stderr are both captured (stderr appended after stdout),
+    /// Stderr is dup'd onto the stdout fd before exec (mirroring upstream's
+    /// `stderr=STDOUT`), so both share one real-time, cap-checked stream;
     /// chunks stream to `iobuffer` as they arrive, and `exec_time` measures
     /// spawn to reaping. Always returns `Some` on success, even for nonzero
     /// exits; the return code carries the failure.
@@ -433,9 +301,8 @@ impl ComChannel for ShellChannel {
     /// # Errors
     ///
     /// Returns [`KirkError::Communication`] when inactive, when the command
-    /// is empty or needs a shell, on spawn/I/O failures, or past
-    /// `MAX_OUTPUT_BYTES`. Returns [`KirkError::KernelPanic`] when the
-    /// output contains `Kernel panic`.
+    /// is empty, on spawn/I/O failures, or past `MAX_OUTPUT_BYTES`. Returns
+    /// [`KirkError::KernelPanic`] when the output contains `Kernel panic`.
     #[allow(
         clippy::too_many_lines,
         reason = "single spawn-stream-reap flow; splitting would scatter pid bookkeeping"
@@ -452,21 +319,33 @@ impl ComChannel for ShellChannel {
                 "Shell is not running",
             )));
         }
-        let argv = split_argv(command)?;
-        let (program, program_args) = argv
-            .split_first()
-            .ok_or_else(|| KirkError::Communication(String::from("command is empty")))?;
+        if command.trim().is_empty() {
+            return Err(KirkError::Communication(String::from("command is empty")));
+        }
 
-        let mut cmd = Command::new(program);
-        cmd.args(program_args)
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(command)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt as _;
             cmd.as_std_mut().process_group(0);
+            // SAFETY: dup2 only rewires this about-to-exec child's own fd 2
+            // onto its already-redirected fd 1 (async-signal-safe, no
+            // allocation); it runs after std sets up stdio and before exec,
+            // matching upstream's `stderr=asyncio.subprocess.STDOUT`.
+            unsafe {
+                cmd.as_std_mut().pre_exec(|| {
+                    if libc::dup2(1, 2) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
         }
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
@@ -487,26 +366,14 @@ impl ComChannel for ShellChannel {
         self.inner.pids.lock().await.push(pid);
 
         let start = std::time::Instant::now();
-        let used = Arc::new(AtomicUsize::new(0));
-        let over_cap = Arc::new(AtomicBool::new(false));
-        let saw_panic = Arc::new(AtomicBool::new(false));
+        let mut used = 0usize;
+        let mut over_cap = false;
+        let mut saw_panic = false;
 
         let mut child_stdout = child
             .stdout
             .take()
             .ok_or_else(|| KirkError::Communication(String::from("child stdout is not piped")))?;
-        let child_stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| KirkError::Communication(String::from("child stderr is not piped")))?;
-        let stderr_task = tokio::spawn({
-            let (used, over_cap, saw_panic) = (
-                Arc::clone(&used),
-                Arc::clone(&over_cap),
-                Arc::clone(&saw_panic),
-            );
-            async move { drain_pipe(child_stderr, pid, &used, &over_cap, &saw_panic).await }
-        });
 
         let mut stdout = String::new();
         let mut chunk = vec![0u8; READ_CHUNK];
@@ -518,9 +385,9 @@ impl ComChannel for ShellChannel {
             if n == 0 {
                 break;
             }
-            let total = used.fetch_add(n, Ordering::SeqCst) + n;
-            if total > MAX_OUTPUT_BYTES {
-                over_cap.store(true, Ordering::SeqCst);
+            used += n;
+            if used > MAX_OUTPUT_BYTES {
+                over_cap = true;
                 kill_process_group(pid);
                 continue;
             }
@@ -530,17 +397,13 @@ impl ComChannel for ShellChannel {
             }
             stdout.push_str(&text);
             if tail_contains_panic(&stdout, text.len()) {
-                saw_panic.store(true, Ordering::SeqCst);
+                saw_panic = true;
             }
         }
 
         let status = child
             .wait()
             .await
-            .map_err(|err| KirkError::Communication(err.to_string()))?;
-        let stderr_bytes = stderr_task
-            .await
-            .map_err(|err| KirkError::Communication(err.to_string()))?
             .map_err(|err| KirkError::Communication(err.to_string()))?;
 
         self.inner
@@ -552,23 +415,15 @@ impl ComChannel for ShellChannel {
         // finally-block kill.
         kill_process_group(pid);
 
-        if saw_panic.load(Ordering::SeqCst) {
+        if saw_panic {
             return Err(KirkError::KernelPanic(String::from(
                 "kernel panic detected in command output",
             )));
         }
-        if over_cap.load(Ordering::SeqCst) {
+        if over_cap {
             return Err(KirkError::Communication(format!(
                 "command output exceeds {MAX_OUTPUT_BYTES} byte cap"
             )));
-        }
-
-        let stderr_text = String::from_utf8_lossy(&stderr_bytes);
-        if !stderr_text.is_empty() {
-            if let Some(buffer) = &iobuffer {
-                buffer.write(&stderr_text).await?;
-            }
-            stdout.push_str(&stderr_text);
         }
 
         Ok(Some(CmdResult {
@@ -622,53 +477,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_simple_words() {
-        assert_eq!(
-            split_argv("echo 0").expect("simple split"),
-            vec!["echo", "0"]
-        );
-    }
-
-    #[test]
-    fn split_quotes_and_escapes() {
-        assert_eq!(
-            split_argv(r#"echo 'a b' "c d" e\ f"#).expect("quoted split"),
-            vec!["echo", "a b", "c d", "e f"]
-        );
-    }
-
-    #[test]
-    fn split_rejects_empty_and_blank() {
-        assert!(split_argv("").is_err());
-        assert!(split_argv("   ").is_err());
-    }
-
-    #[test]
-    fn split_rejects_shell_operators() {
-        for command in [
-            "echo hi > /tmp/x",
-            "echo a | grep a",
-            "sleep 1; echo done",
-            "sleep 1 && echo done",
-            "echo `id`",
-            "echo $(id)",
-            "echo (group)",
-        ] {
-            assert!(split_argv(command).is_err(), "{command} must be rejected");
-        }
-    }
-
-    #[test]
-    fn split_rejects_substitution_but_keeps_bare_dollar() {
-        assert!(split_argv("echo -n $PWD").is_err());
-        assert_eq!(split_argv("echo price: $").expect("bare dollar").len(), 3);
-        for command in ["echo $@", "echo $-", "echo $!", "echo $*"] {
-            assert!(split_argv(command).is_err(), "{command} must be rejected");
-        }
-    }
-
-    #[test]
-    fn split_rejects_unclosed_quote() {
-        assert!(split_argv("echo 'oops").is_err());
+    fn panic_marker_detected_at_chunk_boundary() {
+        let mut text = String::from("previous output ");
+        let new_bytes = "Kernel panic".len();
+        text.push_str("Kernel panic");
+        assert!(tail_contains_panic(&text, new_bytes));
+        assert!(!tail_contains_panic("no marker here", 5));
     }
 }

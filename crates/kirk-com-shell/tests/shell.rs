@@ -1,8 +1,6 @@
-//! Ports of `kirk/libkirk/tests/test_shell.py` + generic `test_com.py` cases.
-//!
-//! Adaptations for argv-exec (no shell): `cwd` uses `pwd` instead of
-//! `echo -n $PWD`, `env` uses `printenv` instead of `echo -n $HELLO`, and
-//! file fixtures are created with [`std::fs`] instead of `>` redirects.
+//! Ports of `kirk/libkirk/tests/test_shell.py` + generic `test_com.py` cases,
+//! plus dedicated shell-syntax coverage (expansion, `&&`, pipes,
+//! redirection) now that `run_command` goes through `/bin/sh -c`.
 //! Handles are `Clone`d for concurrent `stop`-during-`run` cases, mirroring
 //! upstream coroutines sharing one channel object.
 
@@ -163,20 +161,81 @@ async fn run_command_rejects_empty() {
 }
 
 #[tokio::test]
-async fn run_command_rejects_shell_syntax() {
+async fn run_command_supports_builtin_sut_probe_syntax() {
+    // Mirrors `kirk_sut::PROBE_COMMANDS[0]`'s shape (`. file && echo "$VAR"`):
+    // source, `&&`, and `$VAR` expansion, none of which argv-exec can
+    // represent. Uses a fixture instead of `/etc/os-release` so the test
+    // stays portable to hosts (e.g. macOS) that don't ship that file.
+    let dir = temp_dir("probe-syntax");
+    let release = dir.join("release");
+    std::fs::write(&release, "ID=testos\n").expect("write fixture");
     let mut channel = communicated().await;
-    for command in [
-        "echo hi > /tmp/kirk-shell-x",
-        "echo -n $PWD",
-        "sleep 1 && echo done",
-    ] {
-        let err = channel
-            .run_command(command, None, None, None)
-            .await
-            .expect_err("shell syntax must fail");
-        assert!(matches!(err, KirkError::Communication(_)), "{command}");
-    }
+    let res = channel
+        .run_command(
+            &format!(". {} && echo \"$ID\"", release.display()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("run probe")
+        .expect("probe result");
+    assert_eq!(res.returncode, 0);
+    assert_eq!(res.stdout.trim(), "testos");
     channel.stop(None).await.expect("stop");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn run_command_supports_shell_syntax() {
+    let dir = temp_dir("shell-syntax");
+    let out_path = dir.join("out");
+    let mut channel = communicated().await;
+
+    // Variable expansion.
+    let res = channel
+        .run_command("echo -n $PWD", Some(dir.to_str().unwrap()), None, None)
+        .await
+        .expect("run expansion")
+        .expect("expansion result");
+    assert_eq!(res.returncode, 0);
+    assert!(!res.stdout.trim().is_empty());
+
+    // Compound operator.
+    let res = channel
+        .run_command("true && echo chained", None, None, None)
+        .await
+        .expect("run &&")
+        .expect("&& result");
+    assert_eq!(res.returncode, 0);
+    assert_eq!(res.stdout.trim(), "chained");
+
+    // Pipeline, representative of LTP runtest commands.
+    let res = channel
+        .run_command("printf 'a\\nb\\nc\\n' | grep b", None, None, None)
+        .await
+        .expect("run pipe")
+        .expect("pipe result");
+    assert_eq!(res.returncode, 0);
+    assert_eq!(res.stdout.trim(), "b");
+
+    // Redirection.
+    let res = channel
+        .run_command(
+            &format!("echo redirected > {}", out_path.display()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("run redirect")
+        .expect("redirect result");
+    assert_eq!(res.returncode, 0);
+    let written = std::fs::read_to_string(&out_path).expect("read redirected file");
+    assert_eq!(written.trim(), "redirected");
+
+    channel.stop(None).await.expect("stop");
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[tokio::test]
