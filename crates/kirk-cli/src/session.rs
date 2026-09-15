@@ -22,7 +22,7 @@ use kirk_ltp::{Framework as LtpFrameworkTrait, LtpFramework};
 use kirk_plugin::Plugin as _;
 use kirk_scheduler::{Framework as SchedFramework, StdoutBuffer, Sut as SchedSut};
 use kirk_session::{RunOptions, Session, SessionConfig, SessionFramework, SessionSut};
-use kirk_support::{JSONFileMonitor, StdoutPrinter, TempDir, attach_console};
+use kirk_support::{JSONFileMonitor, TempDir, attach_console};
 use kirk_sut::{GenericSut, Sut as SutTrait};
 use tokio::sync::Mutex;
 
@@ -252,11 +252,20 @@ impl SchedSut for CliSut {
         env: &HashMap<String, String>,
         capture: &StdoutBuffer,
     ) -> Result<Option<CmdResult>, KirkError> {
-        let mut guard = self.sut.lock().await;
-        let result = guard
-            .channel_mut()?
-            .run_command(command, cwd, Some(env), None)
-            .await?;
+        // Only hold the SUT lock long enough to obtain a handle: a shared
+        // one when the channel supports it (concurrent workers then run
+        // fully overlapped), otherwise the exclusive channel itself for the
+        // command's whole duration, matching prior serialized behavior.
+        let shared = self.sut.lock().await.channel()?.concurrent_handle();
+        let result = if let Some(mut handle) = shared {
+            handle.run_command(command, cwd, Some(env), None).await?
+        } else {
+            let mut guard = self.sut.lock().await;
+            guard
+                .channel_mut()?
+                .run_command(command, cwd, Some(env), None)
+                .await?
+        };
         if let Some(row) = &result {
             capture.push(&row.stdout).await;
         }
@@ -391,6 +400,11 @@ impl SessionFramework for CliFramework {
 
 /// Start the session, mirroring `_start_session`.
 ///
+/// `printer` receives every line the selected UI prints; production callers
+/// pass [`kirk_support::StdoutPrinter`], tests pass a capturing printer to
+/// assert on `run_session`'s real output instead of calling UI methods
+/// directly.
+///
 /// Setup failures propagate for the caller to report as argument errors
 /// (exit 2, like upstream `parser.error`); a failed run resolves to
 /// `RC_ERROR` after the `session_error` event reaches the UI.
@@ -402,7 +416,10 @@ impl SessionFramework for CliFramework {
     clippy::too_many_lines,
     reason = "single startup sequence mirroring _start_session"
 )]
-pub async fn run_session(args: &Args) -> Result<i32, KirkError> {
+pub async fn run_session(
+    args: &Args,
+    printer: Arc<dyn kirk_support::Printer>,
+) -> Result<i32, KirkError> {
     let skip_tests = get_skip_tests(args.skip_tests.as_deref(), args.skip_file.as_deref()).await?;
     if !skip_tests.is_empty() {
         regex::Regex::new(&skip_tests).map_err(|_| {
@@ -445,14 +462,29 @@ pub async fn run_session(args: &Args) -> Result<i32, KirkError> {
     };
 
     let events = EventRegistry::new();
-    // All three UI kinds share the `ConsoleUi` event surface (structured
-    // per-test summaries need direct calls the string registry cannot
-    // carry), so one console is wired while `select_ui` records the mode.
-    let _kind = select_ui(args.workers, args.verbose);
-    let printer = Arc::new(StdoutPrinter::new());
-    let console = Arc::new(kirk_support::ConsoleUi::new(args.no_colors, printer));
+    // Every mode shares the base session/SUT/suite/command handlers; the
+    // selected `UiKind` additionally wires its scheduler-owned events
+    // (test_started/test_completed/kernel_*/...) on the same registry.
+    let console = Arc::new(kirk_support::ConsoleUi::new(
+        args.no_colors,
+        printer.clone(),
+    ));
     attach_console(&console, &events).await?;
     drop(console);
+    match select_ui(args.workers, args.verbose) {
+        UiKind::Simple => {
+            let ui = Arc::new(kirk_support::SimpleUi::new(args.no_colors, printer));
+            kirk_support::attach_simple(&ui, &events).await?;
+        }
+        UiKind::Verbose => {
+            let ui = Arc::new(kirk_support::VerboseUi::new(args.no_colors, printer));
+            kirk_support::attach_verbose(&ui, &events).await?;
+        }
+        UiKind::Parallel => {
+            let ui = Arc::new(kirk_support::ParallelUi::new(args.no_colors, printer));
+            kirk_support::attach_parallel(&ui, &events).await?;
+        }
+    }
 
     let monitor = if let Some(path) = args.monitor.as_deref() {
         let monitor = JSONFileMonitor::new(path)?;
@@ -665,7 +697,8 @@ mod tests {
             dry_run: true,
         };
         assert!(crate::validate::validate(&args, &coms, &suts).is_ok());
-        assert_eq!(run_session(&args).await.unwrap(), RC_OK);
+        let printer = Arc::new(kirk_support::VecPrinter::new());
+        assert_eq!(run_session(&args, printer).await.unwrap(), RC_OK);
         tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 }

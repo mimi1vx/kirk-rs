@@ -3,11 +3,14 @@
 //! Exit codes mirror upstream: `0` ok, `1` session failure, `2` argument
 //! error, `130` on interrupt. Only this binary layer uses `anyhow`.
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use clap::Parser;
 use kirk_cli::args::Args;
 use kirk_cli::session::{builtin_plugins, run_session};
 use kirk_cli::validate::{Validation, plugin_help, validate};
+use kirk_support::StdoutPrinter;
 
 #[tokio::main]
 async fn main() {
@@ -31,7 +34,10 @@ async fn run() -> i32 {
             print!("{}", plugin_help("--sut", &suts));
             0
         }
-        Ok(Validation::Proceed) => match run_session(&args).await.context("session setup failed") {
+        Ok(Validation::Proceed) => match run_session(&args, Arc::new(StdoutPrinter::new()))
+            .await
+            .context("session setup failed")
+        {
             Ok(code) => code,
             Err(err) => {
                 eprintln!("kirk: error: {err:#}");

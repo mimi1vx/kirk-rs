@@ -4,9 +4,9 @@
 //! `run_command` result dict `{command, returncode, stdout, exec_time}`,
 //! and [`ComChannel`] mirrors the Python `ComChannel` plugin base.
 //!
-//! Implementations of [`ComChannel::run_command`] take the command as a
-//! single string for upstream parity, but must split it into an argv vector
-//! and spawn it directly: never forward it to `sh -c` or any other shell.
+//! Implementations of [`ComChannel::run_command`] take `command` as a single
+//! string and run it through the target's shell, matching upstream
+//! `asyncio.create_subprocess_shell` semantics (see `kirk-com-shell`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -109,6 +109,21 @@ pub trait ComChannel: Plugin + Send + Sync {
     /// Typed equivalent of [`Plugin::clone_box`] so registries can clone
     /// without downcasting.
     fn clone_channel_box(&self, new_name: &str) -> Box<dyn ComChannel>;
+
+    /// Borrow a handle sharing this channel's *live* session state, for
+    /// concurrent [`ComChannel::run_command`] calls from multiple tasks.
+    ///
+    /// Unlike [`ComChannel::clone_channel_box`] (a fresh, inactive
+    /// instance), a concurrent handle stays attached to the same session so
+    /// `active()`/process tracking/`stop()` observe every in-flight command.
+    /// Only channels whose internal state already supports this (interior
+    /// mutability behind a cheap `Clone`, e.g. `kirk_com_shell::ShellChannel`
+    /// sharing an `Arc`) should override this; the default `None` keeps
+    /// every other channel serialized exactly as before, which is always
+    /// sound.
+    fn concurrent_handle(&self) -> Option<Box<dyn ComChannel>> {
+        None
+    }
 
     /// Retry [`ComChannel::communicate`] up to `retries` times.
     ///
