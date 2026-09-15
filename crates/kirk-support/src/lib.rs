@@ -15,4 +15,5 @@ pub use monitor::JSONFileMonitor;
 pub use tempfile::TempDir;
 pub use ui::{
     ConsoleUi, ParallelUi, Printer, SimpleUi, StdoutPrinter, VecPrinter, VerboseUi, attach_console,
+    attach_parallel, attach_simple, attach_verbose,
 };

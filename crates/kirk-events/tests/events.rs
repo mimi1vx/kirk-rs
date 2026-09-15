@@ -4,7 +4,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kirk_events::{BoxFuture, EventArgs, EventRegistry, Handler, HandlerResult};
+use kirk_core::data::Test;
+use kirk_events::{BoxFuture, EventArgs, EventPayload, EventRegistry, Handler, HandlerResult};
 
 fn ok_handler() -> Handler {
     Arc::new(|_: EventArgs| -> BoxFuture<HandlerResult> { Box::pin(async move { Ok(()) }) })
@@ -91,7 +92,7 @@ async fn empty_names_are_rejected() {
     assert!(registry.register("", ok_handler(), false).await.is_err());
     assert!(registry.is_registered("").await.is_err());
     assert!(registry.unregister("", None).await.is_err());
-    assert!(registry.fire("", None).await.is_err());
+    assert!(registry.fire("", EventPayload::None).await.is_err());
 }
 
 #[tokio::test]
@@ -143,7 +144,7 @@ async fn unregister_single_handler() {
     assert!(matches!(registry.is_registered("myevent").await, Ok(true)));
 
     let running = run_loop(&registry);
-    assert!(registry.fire("myevent", None).await.is_ok());
+    assert!(registry.fire("myevent", EventPayload::None).await.is_ok());
     let hits_probe = Arc::clone(&hits);
     wait_for(|| async { !hits_probe.lock().await.is_empty() }).await;
     stop_loop(&registry, running).await;
@@ -177,7 +178,12 @@ async fn unregister_entire_event_and_missing_name_noop() {
 
     // Firing an unknown event is a silent no-op.
     let running = run_loop(&registry);
-    assert!(registry.fire("not_registered", None).await.is_ok());
+    assert!(
+        registry
+            .fire("not_registered", EventPayload::None)
+            .await
+            .is_ok()
+    );
     stop_loop(&registry, running).await;
 }
 
@@ -193,8 +199,8 @@ async fn fire_fanout_delivers_every_payload() {
             let called = Arc::clone(&called);
             Box::pin(async move {
                 let value: usize = args
-                    .message
-                    .as_deref()
+                    .payload
+                    .as_text()
                     .unwrap_or("")
                     .parse()
                     .map_err(|_| String::from("bad payload"))?;
@@ -208,7 +214,12 @@ async fn fire_fanout_delivers_every_payload() {
 
     let running = run_loop(&registry);
     for i in 0..TIMES {
-        assert!(registry.fire("myevent", Some(i.to_string())).await.is_ok());
+        assert!(
+            registry
+                .fire("myevent", EventPayload::Text(i.to_string()))
+                .await
+                .is_ok()
+        );
     }
     let called_probe = Arc::clone(&called);
     wait_for(|| async { called_probe.lock().await.len() >= TIMES }).await;
@@ -247,7 +258,12 @@ async fn ordered_handlers_run_serially_in_registration_order() {
     }
 
     let running = run_loop(&registry);
-    assert!(registry.fire("ordered_evt", None).await.is_ok());
+    assert!(
+        registry
+            .fire("ordered_evt", EventPayload::None)
+            .await
+            .is_ok()
+    );
     let order_probe = Arc::clone(&order);
     wait_for(|| async { order_probe.lock().await.len() >= 3 }).await;
     stop_loop(&registry, running).await;
@@ -283,7 +299,7 @@ async fn handler_error_reaches_internal_error() {
     );
 
     let running = run_loop(&registry);
-    assert!(registry.fire("bad_event", None).await.is_ok());
+    assert!(registry.fire("bad_event", EventPayload::None).await.is_ok());
     let errors_probe = Arc::clone(&errors);
     wait_for(|| async { !errors_probe.lock().await.is_empty() }).await;
     stop_loop(&registry, running).await;
@@ -291,7 +307,53 @@ async fn handler_error_reaches_internal_error() {
     let guard = errors.lock().await;
     assert_eq!(guard.len(), 1);
     assert_eq!(guard[0].event, "bad_event");
-    assert_eq!(guard[0].message.as_deref(), Some("test error"));
+    assert_eq!(guard[0].payload.as_text(), Some("test error"));
+}
+
+#[tokio::test]
+async fn structured_payload_survives_clone_and_dispatch() {
+    // Non-text payloads (Test/TestResults/Suite/...) must reach handlers
+    // with every field intact, not flattened to a string.
+    let registry = EventRegistry::new();
+    let seen: Arc<tokio::sync::Mutex<Vec<Test>>> = Arc::default();
+
+    let handler: Handler = {
+        let seen = Arc::clone(&seen);
+        Arc::new(move |args: EventArgs| -> BoxFuture<HandlerResult> {
+            let seen = Arc::clone(&seen);
+            Box::pin(async move {
+                let EventPayload::Test(test) = args.payload else {
+                    return Err(String::from("expected Test payload"));
+                };
+                seen.lock().await.push(test);
+                Ok(())
+            })
+        })
+    };
+    assert!(
+        registry
+            .register("test_started", handler, false)
+            .await
+            .is_ok()
+    );
+
+    let test = Test::new("mytest", "echo")
+        .unwrap()
+        .with_args(vec![String::from("-n"), String::from("hello")]);
+    let payload = EventPayload::Test(test.clone());
+    // Clone must be independently usable (fire below takes ownership).
+    let cloned = payload.clone();
+    assert_eq!(payload, cloned);
+
+    let running = run_loop(&registry);
+    assert!(registry.fire("test_started", cloned).await.is_ok());
+    let seen_probe = Arc::clone(&seen);
+    wait_for(|| async { !seen_probe.lock().await.is_empty() }).await;
+    stop_loop(&registry, running).await;
+
+    let guard = seen.lock().await;
+    assert_eq!(guard.len(), 1);
+    assert_eq!(guard[0], test);
 }
 
 #[tokio::test]
@@ -327,7 +389,7 @@ async fn handler_panic_reaches_internal_error() {
     );
 
     let running = run_loop(&registry);
-    assert!(registry.fire("bad_event", None).await.is_ok());
+    assert!(registry.fire("bad_event", EventPayload::None).await.is_ok());
     let errors_probe = Arc::clone(&errors);
     wait_for(|| async { !errors_probe.lock().await.is_empty() }).await;
     stop_loop(&registry, running).await;
@@ -335,5 +397,5 @@ async fn handler_panic_reaches_internal_error() {
     let guard = errors.lock().await;
     assert_eq!(guard.len(), 1);
     assert_eq!(guard[0].event, "bad_event");
-    assert_eq!(guard[0].message.as_deref(), Some("boom"));
+    assert_eq!(guard[0].payload.as_text(), Some("boom"));
 }

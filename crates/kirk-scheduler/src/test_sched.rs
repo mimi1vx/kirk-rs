@@ -32,7 +32,7 @@ use kirk_com::CmdResult;
 use kirk_core::KirkError;
 use kirk_core::data::Test;
 use kirk_core::results::TestResults;
-use kirk_events::EventRegistry;
+use kirk_events::{EventPayload, EventRegistry};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
@@ -204,8 +204,8 @@ fn fatal_outcome(error: KirkError) -> ExecOutcome {
 
 /// Best-effort event delivery: upstream fires without awaiting handlers, so a
 /// failing registry must not fail test execution.
-async fn fire(events: &EventRegistry, name: &str, message: Option<String>) {
-    drop(events.fire(name, message).await);
+async fn fire(events: &EventRegistry, name: &str, payload: EventPayload) {
+    drop(events.fire(name, payload).await);
 }
 
 impl<S, F> TestScheduler<S, F>
@@ -213,10 +213,18 @@ where
     S: Sut + 'static,
     F: Framework + 'static,
 {
-    /// Create a scheduler. Non-positive or non-finite `test_timeout` disables
-    /// the execution timeout; `max_workers < 1` clamps to `1`.
+    /// Create a scheduler sharing `events` with the caller (session, UI,
+    /// monitor), so scheduler-owned events are actually observable outside
+    /// this crate. Non-positive or non-finite `test_timeout` disables the
+    /// execution timeout; `max_workers < 1` clamps to `1`.
     #[must_use]
-    pub fn new(sut: S, framework: F, test_timeout: f64, max_workers: usize) -> Self {
+    pub fn new(
+        sut: S,
+        framework: F,
+        events: EventRegistry,
+        test_timeout: f64,
+        max_workers: usize,
+    ) -> Self {
         let test_timeout = if test_timeout.is_finite() && test_timeout > 0.0 {
             test_timeout
         } else {
@@ -232,7 +240,7 @@ where
                 running_sem: Mutex::new(Arc::new(Semaphore::new(1))),
                 schedule_lock: Mutex::new(()),
             }),
-            events: EventRegistry::new(),
+            events,
             test_timeout,
             max_workers: max_workers.max(1),
         }
@@ -442,7 +450,7 @@ where
         return None;
     }
 
-    fire(events, "test_started", Some(test.name().to_owned())).await;
+    fire(events, "test_started", EventPayload::Test(test.clone())).await;
     write_kmsg(shared, &test, None).await;
 
     let capture = StdoutBuffer::default();
@@ -469,7 +477,12 @@ where
         }
     };
 
-    fire(events, "test_completed", Some(test.name().to_owned())).await;
+    fire(
+        events,
+        "test_completed",
+        EventPayload::TestResults(parsed.clone()),
+    )
+    .await;
     write_kmsg(shared, &test, Some(&parsed)).await;
     shared.results.lock().await.push(parsed);
     drop(permit);
@@ -477,15 +490,20 @@ where
     // Kernel errors raise after results are collected, mirroring upstream.
     match outcome.status {
         TestStatus::KernelTainted => {
-            fire(events, "kernel_tainted", Some(outcome.detail.clone())).await;
+            fire(
+                events,
+                "kernel_tainted",
+                EventPayload::Text(outcome.detail.clone()),
+            )
+            .await;
             Some(KirkError::KernelTainted(outcome.detail))
         }
         TestStatus::KernelPanic => {
-            fire(events, "kernel_panic", None).await;
+            fire(events, "kernel_panic", EventPayload::None).await;
             Some(KirkError::KernelPanic(outcome.detail))
         }
         TestStatus::KernelTimeout => {
-            fire(events, "sut_not_responding", None).await;
+            fire(events, "sut_not_responding", EventPayload::None).await;
             Some(KirkError::KernelTimeout("SUT is not responding".to_owned()))
         }
         TestStatus::Ok | TestStatus::TestTimeout => None,
@@ -568,7 +586,7 @@ where
                 if code != tainted_before {
                     status = TestStatus::KernelTainted;
                     detail = messages.join(", ");
-                    fire(events, "kernel_tainted", Some(detail.clone())).await;
+                    fire(events, "kernel_tainted", EventPayload::Text(detail.clone())).await;
                 }
             }
             Err(KirkError::KernelPanic(partial)) => {
@@ -710,27 +728,28 @@ mod tests {
 
     #[test]
     fn constructor_clamps_timeout_and_workers() {
-        let scheduler = TestScheduler::new(DummySut, DummyFramework, -5.0, 0);
+        let scheduler = TestScheduler::new(DummySut, DummyFramework, EventRegistry::new(), -5.0, 0);
         assert!((scheduler.test_timeout() - 0.0).abs() < f64::EPSILON);
         assert_eq!(scheduler.max_workers(), 1);
     }
 
     #[test]
     fn constructor_keeps_valid_values() {
-        let scheduler = TestScheduler::new(DummySut, DummyFramework, 30.0, 4);
+        let scheduler = TestScheduler::new(DummySut, DummyFramework, EventRegistry::new(), 30.0, 4);
         assert!((scheduler.test_timeout() - 30.0).abs() < f64::EPSILON);
         assert_eq!(scheduler.max_workers(), 4);
     }
 
     #[test]
     fn constructor_rejects_non_finite_timeout() {
-        let scheduler = TestScheduler::new(DummySut, DummyFramework, f64::NAN, 2);
+        let scheduler =
+            TestScheduler::new(DummySut, DummyFramework, EventRegistry::new(), f64::NAN, 2);
         assert!((scheduler.test_timeout() - 0.0).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
     async fn schedule_rejects_empty_jobs() {
-        let scheduler = TestScheduler::new(DummySut, DummyFramework, 0.0, 1);
+        let scheduler = TestScheduler::new(DummySut, DummyFramework, EventRegistry::new(), 0.0, 1);
         let error = scheduler.schedule(&[]).await.unwrap_err();
         assert!(matches!(error, KirkError::Scheduler(_)));
     }

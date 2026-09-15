@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use kirk_core::KirkError;
 use kirk_core::data::Test;
+use kirk_events::EventRegistry;
 use kirk_scheduler::TestScheduler;
 use support::{FakeFramework, FakeSut, echo_test, sleep_test};
 
@@ -14,7 +15,13 @@ fn scheduler(
     test_timeout: f64,
     workers: usize,
 ) -> TestScheduler<FakeSut, FakeFramework> {
-    TestScheduler::new(sut, FakeFramework::new(), test_timeout, workers)
+    TestScheduler::new(
+        sut,
+        FakeFramework::new(),
+        EventRegistry::new(),
+        test_timeout,
+        workers,
+    )
 }
 
 #[tokio::test]

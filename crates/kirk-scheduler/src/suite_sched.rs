@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use kirk_core::KirkError;
 use kirk_core::data::Suite;
 use kirk_core::results::{ResultStatus, SuiteResults, TestResults};
+use kirk_events::EventPayload;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
@@ -48,12 +49,14 @@ where
     S: Sut + 'static,
     F: Framework + 'static,
 {
-    /// Create a scheduler. Non-positive or non-finite timeouts disable the
-    /// corresponding timeout; `max_workers < 1` clamps to `1`.
+    /// Create a scheduler sharing `events` with the caller (see
+    /// [`TestScheduler::new`]). Non-positive or non-finite timeouts disable
+    /// the corresponding timeout; `max_workers < 1` clamps to `1`.
     #[must_use]
     pub fn new(
         sut: S,
         framework: F,
+        events: kirk_events::EventRegistry,
         suite_timeout: f64,
         exec_timeout: f64,
         max_workers: usize,
@@ -64,7 +67,7 @@ where
             0.0
         };
         Self {
-            inner: TestScheduler::new(sut, framework, exec_timeout, max_workers),
+            inner: TestScheduler::new(sut, framework, events, exec_timeout, max_workers),
             results: Mutex::new(Vec::new()),
             stop_flag: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
@@ -144,7 +147,7 @@ where
         drop(
             self.inner
                 .events()
-                .fire("sut_restart", Some(self.inner.sut().name()))
+                .fire("sut_restart", EventPayload::Text(self.inner.sut().name()))
                 .await,
         );
         self.inner.stop().await;
@@ -155,7 +158,7 @@ where
         drop(
             self.inner
                 .events()
-                .fire("suite_started", Some(suite.name().to_owned()))
+                .fire("suite_started", EventPayload::Suite(suite.clone()))
                 .await,
         );
         // Propagates with no suite recorded, mirroring upstream (outside try).
@@ -170,11 +173,15 @@ where
 
         // Suite results are recorded on every path out of the loop,
         // mirroring the upstream finally block.
+        let exec_time = state.exec_times.iter().sum();
         let completed = apply_info(suite.clone(), std::mem::take(&mut state.tests), &info);
         drop(
             self.inner
                 .events()
-                .fire("suite_completed", Some(suite.name().to_owned()))
+                .fire(
+                    "suite_completed",
+                    EventPayload::SuiteCompleted(completed.clone(), exec_time),
+                )
                 .await,
         );
         self.results.lock().await.push(completed);
@@ -196,7 +203,10 @@ where
                         drop(
                             self.inner
                                 .events()
-                                .fire("suite_timeout", Some(suite.name().to_owned()))
+                                .fire(
+                                    "suite_timeout",
+                                    EventPayload::SuiteTimeout(suite.clone(), self.suite_timeout),
+                                )
                                 .await,
                         );
                         state.timed_out = true;
@@ -350,7 +360,14 @@ mod tests {
             }
         }
 
-        let scheduler = SuiteScheduler::new(DummySut, DummyFramework, -1.0, -2.0, 0);
+        let scheduler = SuiteScheduler::new(
+            DummySut,
+            DummyFramework,
+            kirk_events::EventRegistry::new(),
+            -1.0,
+            -2.0,
+            0,
+        );
         assert!((scheduler.suite_timeout() - 0.0).abs() < f64::EPSILON);
         assert!((scheduler.test_scheduler().test_timeout() - 0.0).abs() < f64::EPSILON);
         assert_eq!(scheduler.test_scheduler().max_workers(), 1);

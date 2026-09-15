@@ -28,6 +28,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use kirk_core::KirkError;
+use kirk_core::data::{Suite, Test};
+use kirk_core::results::{SuiteResults, TestResults};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::{JoinError, JoinSet};
 
@@ -38,17 +40,66 @@ use tokio::task::{JoinError, JoinSet};
 /// handlers to receive failures again.
 const INTERNAL_ERROR: &str = "internal_error";
 
+/// Structured data carried by a fired event.
+///
+/// Upstream passes arbitrary `*args`/`**kwargs`; this port carries exactly
+/// the shapes real call sites need instead of flattening everything to
+/// `Option<String>`, which cannot represent test results, suites, exec
+/// times, or return codes without lossy encoding.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventPayload {
+    /// No data (`session_stopped`, `kernel_panic`, `sut_not_responding`).
+    None,
+    /// A single string: SUT name, path, command, or message text.
+    Text(String),
+    /// `session_started`: suite count and the session tmpdir.
+    SessionStarted(usize, String),
+    /// `test_started`: the test about to run.
+    Test(Test),
+    /// `test_completed`: the finished test's results.
+    TestResults(TestResults),
+    /// `test_timed_out`: the test and its timeout in seconds.
+    TestTimedOut(Test, f64),
+    /// `suite_started`: the suite about to run.
+    Suite(Suite),
+    /// `suite_completed`: results plus the suite's total wall time.
+    SuiteCompleted(SuiteResults, f64),
+    /// `suite_timeout`: the suite and its timeout in seconds.
+    SuiteTimeout(Suite, f64),
+    /// `session_dry_run`: suites selected for a dry run.
+    Suites(Vec<Suite>),
+    /// `session_completed`: final per-suite results.
+    SessionCompleted(Vec<SuiteResults>),
+    /// `run_cmd_stop`: command, captured stdout, return code.
+    RunCmdStop(String, String, i32),
+    /// `sut_stdout`: SUT name plus the data chunk.
+    SutStdout(String, String),
+    /// `test_stdout`: the test plus the data chunk.
+    TestStdout(Test, String),
+}
+
+impl EventPayload {
+    /// Borrow the payload as text, when it carries exactly one string.
+    #[must_use]
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+}
+
 /// Arguments delivered to every handler of a fired event.
 ///
-/// Upstream passes arbitrary `*args`/`**kwargs`; this port carries only what
-/// call sites need. For `INTERNAL_ERROR` deliveries, `event` is the
-/// *failing* event name and `message` is the failure description.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// For `INTERNAL_ERROR` deliveries, `event` is the *failing* event name and
+/// `payload` is [`EventPayload::Text`] holding the failure description.
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventArgs {
     /// Event being handled, or the failing event for internal errors.
     pub event: String,
-    /// Optional payload; the failure description for internal errors.
-    pub message: Option<String>,
+    /// Structured payload; [`EventPayload::Text`] with the failure
+    /// description for internal errors.
+    pub payload: EventPayload,
 }
 
 /// Boxed future every handler returns; `Send` so a [`JoinSet`] can own it.
@@ -92,7 +143,9 @@ enum QueueItem {
         event: String,
         handlers: Vec<Handler>,
         ordered: bool,
-        args: EventArgs,
+        // Boxed: `Stop` carries no data, and some `EventPayload` variants
+        // are large enough to otherwise bloat every `QueueItem`.
+        args: Box<EventArgs>,
     },
     Stop,
 }
@@ -220,7 +273,7 @@ impl EventRegistry {
     /// # Errors
     ///
     /// Returns [`KirkError`] when `event_name` is empty.
-    pub async fn fire(&self, event_name: &str, message: Option<String>) -> Result<(), KirkError> {
+    pub async fn fire(&self, event_name: &str, payload: EventPayload) -> Result<(), KirkError> {
         if event_name.is_empty() {
             return Err(empty_name_error());
         }
@@ -238,13 +291,13 @@ impl EventRegistry {
         }
         let args = EventArgs {
             event: String::from(event_name),
-            message,
+            payload,
         };
         let _ = self.inner.tx.send(QueueItem::Dispatch {
             event: String::from(event_name),
             handlers,
             ordered,
-            args,
+            args: Box::new(args),
         });
         Ok(())
     }
@@ -289,7 +342,7 @@ impl EventRegistry {
                 ordered,
                 args,
             } => {
-                self.execute(&event, handlers, ordered, args).await;
+                self.execute(&event, handlers, ordered, *args).await;
                 true
             }
         }
@@ -342,7 +395,7 @@ impl EventRegistry {
         }
         let args = EventArgs {
             event: String::from(event),
-            message: Some(error),
+            payload: EventPayload::Text(error),
         };
         for handler in handlers {
             let _ = run_owned(handler, args.clone()).await;

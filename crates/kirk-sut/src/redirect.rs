@@ -2,16 +2,16 @@
 //! `RedirectSUTStdout` in `kirk/libkirk/sut.py`.
 //!
 //! Both implement [`IOBuffer`] and forward every write to an
-//! [`EventRegistry`]. Upstream handlers receive structured arguments (the
-//! `Test`/SUT plus the data); [`EventArgs`](kirk_events::EventArgs) carries
-//! only the event name and one message, so the payload here is the data and
-//! the writer struct itself stays queryable for the test/SUT identity.
+//! [`EventRegistry`], firing the test/SUT identity alongside the data
+//! chunk (`EventPayload::TestStdout`/`SutStdout`) so consumers like
+//! `JSONFileMonitor` can build the upstream schema without needing separate
+//! out-of-band state.
 
 use async_trait::async_trait;
 use kirk_com::IOBuffer;
 use kirk_core::KirkError;
 use kirk_core::data::Test;
-use kirk_events::EventRegistry;
+use kirk_events::{EventPayload, EventRegistry};
 
 /// Event fired by [`RedirectTestStdout::write`].
 pub const TEST_STDOUT_EVENT: &str = "test_stdout";
@@ -69,7 +69,10 @@ impl IOBuffer for RedirectTestStdout {
     /// is poisoned.
     async fn write(&self, data: &str) -> Result<(), KirkError> {
         self.events
-            .fire(TEST_STDOUT_EVENT, Some(data.to_owned()))
+            .fire(
+                TEST_STDOUT_EVENT,
+                EventPayload::TestStdout(self.test.clone(), data.to_owned()),
+            )
             .await?;
         self.stdout
             .lock()
@@ -119,11 +122,17 @@ impl IOBuffer for RedirectSutStdout {
     ///
     /// Returns [`KirkError`] when the event cannot fire.
     async fn write(&self, data: &str) -> Result<(), KirkError> {
-        let event = if self.is_cmd {
-            RUN_CMD_STDOUT_EVENT
+        if self.is_cmd {
+            self.events
+                .fire(RUN_CMD_STDOUT_EVENT, EventPayload::Text(data.to_owned()))
+                .await
         } else {
-            SUT_STDOUT_EVENT
-        };
-        self.events.fire(event, Some(data.to_owned())).await
+            self.events
+                .fire(
+                    SUT_STDOUT_EVENT,
+                    EventPayload::SutStdout(self.sut_name.clone(), data.to_owned()),
+                )
+                .await
+        }
     }
 }

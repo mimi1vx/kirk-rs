@@ -7,6 +7,7 @@ use std::time::Duration;
 use kirk_core::KirkError;
 use kirk_core::data::{Suite, Test};
 use kirk_core::results::ResultStatus;
+use kirk_events::EventRegistry;
 use kirk_scheduler::SuiteScheduler;
 use support::{FakeFramework, FakeSut, echo_test, sleep_test};
 
@@ -19,6 +20,7 @@ fn scheduler(
     SuiteScheduler::new(
         sut,
         FakeFramework::new(),
+        EventRegistry::new(),
         suite_timeout,
         exec_timeout,
         workers,

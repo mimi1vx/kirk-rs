@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use kirk_com::{CmdResult, ComChannel, IOBuffer, Registry};
 use kirk_core::KirkError;
 use kirk_core::data::Test;
-use kirk_events::{BoxFuture, EventArgs, EventRegistry, HandlerResult};
+use kirk_events::{BoxFuture, EventArgs, EventPayload, EventRegistry, HandlerResult};
 use kirk_plugin::Plugin;
 use kirk_sut::{
     FAULT_INJECTION_FILES, GenericSut, RUN_CMD_STDOUT_EVENT, RedirectSutStdout, RedirectTestStdout,
@@ -647,6 +647,16 @@ async fn setup_fault_injection_write_failure_errors() {
     assert!(err.to_string().contains("Can't setup"));
 }
 
+/// Extract the trailing data chunk from a stdout-redirect payload.
+fn payload_data(payload: EventPayload) -> String {
+    match payload {
+        EventPayload::Text(data)
+        | EventPayload::SutStdout(_, data)
+        | EventPayload::TestStdout(_, data) => data,
+        _ => String::new(),
+    }
+}
+
 /// Collect `event` payloads until `writes` complete, mirroring the upstream
 /// poll loops around the event queue.
 async fn collect_events(
@@ -663,7 +673,7 @@ async fn collect_events(
                 store
                     .lock()
                     .map_err(|_| String::from("event store poisoned"))?
-                    .push(args.message.unwrap_or_default());
+                    .push(payload_data(args.payload));
                 Ok(())
             }) as BoxFuture<HandlerResult>
         });
@@ -735,7 +745,7 @@ async fn redirect_test_stdout_accumulates_and_fires() {
                 store
                     .lock()
                     .map_err(|_| String::from("event store poisoned"))?
-                    .push(args.message.unwrap_or_default());
+                    .push(payload_data(args.payload));
                 Ok(())
             }) as BoxFuture<HandlerResult>
         });

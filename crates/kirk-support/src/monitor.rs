@@ -17,7 +17,7 @@ use std::sync::Arc;
 use kirk_core::KirkError;
 use kirk_core::data::{Suite, Test};
 use kirk_core::results::{SuiteResults, TestResults};
-use kirk_events::{EventArgs, EventRegistry, HandlerResult};
+use kirk_events::{EventArgs, EventPayload, EventRegistry, HandlerResult};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
@@ -121,35 +121,161 @@ impl JSONFileMonitor {
         Ok(())
     }
 
-    /// Subscribe to all `EVENT_TYPES` on `registry`.
-    ///
-    /// String payloads are recorded as `{"message": payload}` (`{}` when
-    /// absent); payloads that already parse as JSON objects are embedded
-    /// as-is.
+    /// Subscribe to all `EVENT_TYPES` on `registry`, dispatching each fired
+    /// event through its matching typed recorder above so the written
+    /// schema matches upstream exactly. A payload that doesn't match the
+    /// event's expected shape is silently skipped (never written).
     ///
     /// # Errors
     ///
     /// Returns [`KirkError`] when a registration fails.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one registration per EVENT_TYPES entry; splitting would scatter the mapping"
+    )]
     pub async fn attach(&self, registry: &EventRegistry) -> Result<(), KirkError> {
-        for name in EVENT_TYPES {
-            let monitor = self.clone();
-            let msg_type = (*name).to_owned();
-            let handler: kirk_events::Handler = Arc::new(move |args: EventArgs| {
-                let monitor = monitor.clone();
-                let msg_type = msg_type.clone();
-                Box::pin(async move {
-                    monitor
-                        .record(&msg_type, payload(&args))
-                        .await
-                        .map_err(|err| {
-                            // Never leak path or payload detail into error channels.
-                            let _ = err;
-                            String::from("monitor write failed")
-                        })
-                }) as kirk_events::BoxFuture<HandlerResult>
-            });
-            registry.register(name, handler, false).await?;
+        macro_rules! wire {
+            ($name:literal, |$monitor:ident, $payload:ident| $body:expr) => {{
+                let handler = monitor_handler(self, |$monitor, $payload| async move { $body });
+                registry.register($name, handler, false).await?;
+            }};
         }
+
+        wire!("session_restore", |monitor, payload| {
+            if let EventPayload::Text(restore) = payload {
+                monitor.session_restore(&restore).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("session_started", |monitor, payload| {
+            if let EventPayload::SessionStarted(_, tmpdir) = payload {
+                monitor.session_started(&tmpdir).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("session_stopped", |monitor, _payload| {
+            monitor.session_stopped().await
+        });
+        wire!("sut_stdout", |monitor, payload| {
+            if let EventPayload::SutStdout(sut, data) = payload {
+                monitor.sut_stdout(&sut, &data).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("sut_start", |monitor, payload| {
+            if let EventPayload::Text(sut) = payload {
+                monitor.sut_start(&sut).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("sut_stop", |monitor, payload| {
+            if let EventPayload::Text(sut) = payload {
+                monitor.sut_stop(&sut).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("sut_restart", |monitor, payload| {
+            if let EventPayload::Text(sut) = payload {
+                monitor.sut_restart(&sut).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("sut_not_responding", |monitor, _payload| {
+            monitor.sut_not_responding().await
+        });
+        wire!("run_cmd_start", |monitor, payload| {
+            if let EventPayload::Text(cmd) = payload {
+                monitor.run_cmd_start(&cmd).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("run_cmd_stop", |monitor, payload| {
+            if let EventPayload::RunCmdStop(command, stdout, returncode) = payload {
+                monitor.run_cmd_stop(&command, &stdout, returncode).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("test_stdout", |monitor, payload| {
+            if let EventPayload::TestStdout(test, data) = payload {
+                monitor.test_stdout(&test, &data).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("test_started", |monitor, payload| {
+            if let EventPayload::Test(test) = payload {
+                monitor.test_started(&test).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("test_completed", |monitor, payload| {
+            if let EventPayload::TestResults(results) = payload {
+                monitor.test_completed(&results).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("test_timed_out", |monitor, payload| {
+            if let EventPayload::TestTimedOut(test, timeout) = payload {
+                monitor.test_timed_out(&test, timeout).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("suite_started", |monitor, payload| {
+            if let EventPayload::Suite(suite) = payload {
+                monitor.suite_started(&suite).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("suite_completed", |monitor, payload| {
+            if let EventPayload::SuiteCompleted(results, exec_time) = payload {
+                monitor.suite_completed(&results, exec_time).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("suite_timeout", |monitor, payload| {
+            if let EventPayload::SuiteTimeout(suite, timeout) = payload {
+                monitor.suite_timeout(&suite, timeout).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("session_warning", |monitor, payload| {
+            if let EventPayload::Text(msg) = payload {
+                monitor.session_warning(&msg).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("session_error", |monitor, payload| {
+            if let EventPayload::Text(error) = payload {
+                monitor.session_error(&error).await
+            } else {
+                Ok(())
+            }
+        });
+        wire!("kernel_panic", |monitor, _payload| {
+            monitor.kernel_panic().await
+        });
+        wire!("kernel_tainted", |monitor, payload| {
+            if let EventPayload::Text(message) = payload {
+                monitor.kernel_tainted(&message).await
+            } else {
+                Ok(())
+            }
+        });
         Ok(())
     }
 
@@ -368,15 +494,26 @@ fn suite_dict(suite: &Suite) -> Value {
     })
 }
 
-/// Convert an event payload into its `message` document.
-fn payload(args: &EventArgs) -> Value {
-    match &args.message {
-        None => serde_json::json!({}),
-        Some(text) => match serde_json::from_str::<Value>(text) {
-            Ok(Value::Object(_)) => serde_json::from_str(text).unwrap_or(Value::Null),
-            _ => serde_json::json!({"message": text}),
-        },
-    }
+/// Build a handler that forwards the fired event's typed payload to `call`,
+/// which returns the write outcome (`Ok(())` for a shape mismatch, matching
+/// upstream's silent no-op for events with nothing registered).
+fn monitor_handler<F, Fut>(monitor: &JSONFileMonitor, call: F) -> kirk_events::Handler
+where
+    F: Fn(JSONFileMonitor, EventPayload) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = Result<(), KirkError>> + Send + 'static,
+{
+    let monitor = monitor.clone();
+    Arc::new(move |args: EventArgs| {
+        let monitor = monitor.clone();
+        let call = call.clone();
+        Box::pin(async move {
+            call(monitor, args.payload).await.map_err(|err| {
+                // Never leak path or payload detail into error channels.
+                let _ = err;
+                String::from("monitor write failed")
+            })
+        }) as kirk_events::BoxFuture<HandlerResult>
+    })
 }
 
 #[cfg(test)]
@@ -573,7 +710,10 @@ mod tests {
         monitor.attach(&registry).await.unwrap();
         let worker = registry.clone();
         let handle = tokio::spawn(async move { worker.start().await });
-        registry.fire("kernel_panic", None).await.unwrap();
+        registry
+            .fire("kernel_panic", EventPayload::None)
+            .await
+            .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         registry.stop();
         handle.await.unwrap();

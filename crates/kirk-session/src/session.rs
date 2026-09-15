@@ -28,7 +28,7 @@ use kirk_com::CmdResult;
 use kirk_core::KirkError;
 use kirk_core::data::{Suite, Test};
 use kirk_core::results::SuiteResults;
-use kirk_events::EventRegistry;
+use kirk_events::{EventPayload, EventRegistry};
 use kirk_scheduler::{Framework, SuiteScheduler, Sut};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -199,6 +199,7 @@ where
             scheduler: SuiteScheduler::new(
                 sut,
                 framework,
+                events.clone(),
                 config.suite_timeout,
                 config.exec_timeout,
                 config.workers,
@@ -314,8 +315,8 @@ where
     }
 
     /// Best-effort event delivery: a failing registry never fails the run.
-    async fn fire(&self, name: &str, message: Option<String>) {
-        drop(self.events.fire(name, message).await);
+    async fn fire(&self, name: &str, payload: EventPayload) {
+        drop(self.events.fire(name, payload).await);
     }
 
     fn sut(&self) -> &S {
@@ -328,7 +329,7 @@ where
 
     async fn start_sut(&self) -> Result<(), KirkError> {
         let sut = self.sut();
-        self.fire("sut_start", Some(sut.name())).await;
+        self.fire("sut_start", EventPayload::Text(sut.name())).await;
         sut.session_start().await
     }
 
@@ -337,7 +338,7 @@ where
         if !sut.session_is_running().await? {
             return Ok(());
         }
-        self.fire("sut_stop", Some(sut.name())).await;
+        self.fire("sut_stop", EventPayload::Text(sut.name())).await;
         sut.session_stop().await
     }
 
@@ -367,7 +368,8 @@ where
         if restored.is_empty() {
             return Ok(());
         }
-        self.fire("session_restore", Some(path.to_owned())).await;
+        self.fire("session_restore", EventPayload::Text(path.to_owned()))
+            .await;
         for suite in &mut *suites {
             let Some(done) = restored.get(suite.name()) else {
                 continue;
@@ -412,7 +414,8 @@ where
         if self.stop_flag.load(Ordering::SeqCst) {
             return Ok(());
         }
-        self.fire("run_cmd_start", Some(command.to_owned())).await;
+        self.fire("run_cmd_start", EventPayload::Text(command.to_owned()))
+            .await;
         let test = self.framework().session_find_command(command).await?;
         let full = test.full_command();
         let (cwd, env) = (test.cwd().map(str::to_owned), test.env().clone());
@@ -434,7 +437,7 @@ where
         };
         self.fire(
             "run_cmd_stop",
-            Some(format!("{}\n{}\n{}", command, row.stdout, row.returncode)),
+            EventPayload::RunCmdStop(command.to_owned(), row.stdout.clone(), row.returncode),
         )
         .await;
         Ok(())
@@ -466,7 +469,7 @@ where
             },
         };
         if let Some(msg) = warn {
-            self.fire("session_warning", Some(msg)).await;
+            self.fire("session_warning", EventPayload::Text(msg)).await;
         }
     }
 
@@ -503,7 +506,7 @@ where
     }
 
     async fn schedule_infinite(&self, suites: &[Suite]) -> Result<(), KirkError> {
-        let mut count = 0usize;
+        let mut count = 1usize;
         while !self.stop_flag.load(Ordering::SeqCst) {
             let mut round = Vec::with_capacity(suites.len());
             for suite in suites {
@@ -548,7 +551,7 @@ where
         let _run = self.run_lock.lock().await;
         let _exec = self.exec_lock.lock().await;
         if !already_stopped {
-            self.fire("session_stopped", None).await;
+            self.fire("session_stopped", EventPayload::None).await;
         }
         self.stop_flag.store(false, Ordering::SeqCst);
     }
@@ -556,25 +559,27 @@ where
     async fn run_inner(&self, opts: &RunOptions) -> Result<(), KirkError> {
         self.fire(
             "session_started",
-            Some(format!(
-                "{}\n{}",
+            EventPayload::SessionStarted(
                 opts.suites.len(),
-                self.tmpdir.abspath().display()
-            )),
+                self.tmpdir.abspath().display().to_string(),
+            ),
         )
         .await;
         if !self.sut().session_parallel_execution() {
             self.fire(
                 "session_warning",
-                Some(String::from("SUT doesn't support parallel execution")),
+                EventPayload::Text(String::from("SUT doesn't support parallel execution")),
             )
             .await;
         }
         if opts.dry_run
             && let Some(command) = &opts.command
         {
-            self.fire("session_dry_run_command", Some(command.clone()))
-                .await;
+            self.fire(
+                "session_dry_run_command",
+                EventPayload::Text(command.clone()),
+            )
+            .await;
         }
 
         if !opts.suites.is_empty() || !opts.dry_run {
@@ -605,11 +610,8 @@ where
                 }
             }
             if opts.dry_run {
-                let names: Vec<String> = suites
-                    .iter()
-                    .flat_map(|s| s.tests().iter().map(|t| t.name().to_owned()))
-                    .collect();
-                self.fire("session_dry_run", Some(names.join("\n"))).await;
+                self.fire("session_dry_run", EventPayload::Suites(suites))
+                    .await;
             } else {
                 self.run_scheduler(&suites, opts.runtime).await?;
             }
@@ -631,7 +633,8 @@ where
         if let Err(err) = &outcome
             && !self.stop_flag.load(Ordering::SeqCst)
         {
-            self.fire("session_error", Some(short_error(err))).await;
+            self.fire("session_error", EventPayload::Text(short_error(err)))
+                .await;
         }
 
         if opts.fault_prob != 0 && !opts.dry_run {
@@ -656,7 +659,8 @@ where
             }
             for target in &targets {
                 if let Err(err) = exporter.save_file(&results, target).await {
-                    self.fire("session_error", Some(short_error(&err))).await;
+                    self.fire("session_error", EventPayload::Text(short_error(&err)))
+                        .await;
                     outcome = Err(err);
                     break;
                 }
@@ -664,7 +668,7 @@ where
         }
 
         self.inner_stop().await;
-        self.fire("session_completed", Some(results.len().to_string()))
+        self.fire("session_completed", EventPayload::SessionCompleted(results))
             .await;
         outcome
     }

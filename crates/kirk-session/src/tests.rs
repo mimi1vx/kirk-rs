@@ -282,6 +282,77 @@ async fn run_executes_suites() {
 }
 
 #[tokio::test]
+async fn scheduler_events_reach_session_registry() {
+    // Proves the session's shared registry, not an isolated one inside the
+    // scheduler, is what actually dispatches scheduler-owned events.
+    let root = sandbox("events");
+    let events = EventRegistry::new();
+
+    let counters: HashMap<&str, Arc<AtomicUsize>> = [
+        "suite_started",
+        "test_started",
+        "test_completed",
+        "suite_completed",
+    ]
+    .into_iter()
+    .map(|name| (name, Arc::new(AtomicUsize::new(0))))
+    .collect();
+    for (name, counter) in &counters {
+        let counter = Arc::clone(counter);
+        events
+            .register(
+                name,
+                Arc::new(move |_args: kirk_events::EventArgs| {
+                    let counter = Arc::clone(&counter);
+                    Box::pin(async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                }),
+                false,
+            )
+            .await
+            .unwrap();
+    }
+
+    let session = Session::new(
+        TempDir::new(Some(&root), 5).unwrap(),
+        FakeSut::new(),
+        FakeFramework::new(),
+        events.clone(),
+        SessionConfig {
+            exec_timeout: 30.0,
+            suite_timeout: 30.0,
+            workers: 1,
+            force_parallel: false,
+        },
+    );
+
+    let events_bg = events.clone();
+    let events_task = tokio::spawn(async move { events_bg.start().await });
+
+    session
+        .run(&RunOptions {
+            suites: vec![String::from("suite01")],
+            pattern: Some(String::from("test01")),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    events.stop();
+    events_task.await.unwrap();
+
+    for (name, counter) in &counters {
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "{name} must fire exactly once"
+        );
+    }
+}
+
+#[tokio::test]
 async fn run_with_pattern() {
     let root = sandbox("pattern");
     let session = session(&root);

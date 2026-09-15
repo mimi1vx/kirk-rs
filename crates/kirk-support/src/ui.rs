@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use kirk_core::data::{Suite, Test};
 use kirk_core::results::{SuiteResults, TestResults};
-use kirk_events::EventRegistry;
+use kirk_events::{EventPayload, EventRegistry};
 
 /// Output sink for user interfaces.
 pub trait Printer: Send + Sync {
@@ -84,6 +84,7 @@ pub struct ConsoleUi {
 
 impl ConsoleUi {
     /// ANSI colors, mirroring upstream constants.
+    const WHITE: &'static str = "\x1b[1;37m";
     pub const GREEN: &'static str = "\x1b[1;32m";
     const YELLOW: &'static str = "\x1b[1;33m";
     const RED: &'static str = "\x1b[1;31m";
@@ -338,6 +339,39 @@ impl ConsoleUi {
         }
     }
 
+    /// Handle `suite_started`.
+    async fn suite_started(&self, suite: &Suite) {
+        self.print_underline(&format!("Suite: {}", suite.name()))
+            .await;
+    }
+
+    /// Handle `suite_completed`.
+    async fn suite_completed(&self, results: &SuiteResults, exec_time: f64) {
+        self.styled(
+            &format!(
+                "\nExecution time: {}\n",
+                Self::user_friendly_duration(exec_time)
+            ),
+            None,
+            "\n",
+        )
+        .await;
+        // No need for a second summary when there's only one suite.
+        if *self.num_suites.lock().await > 1 {
+            self.print_summary(std::slice::from_ref(results)).await;
+        }
+    }
+
+    /// Handle `suite_timeout`.
+    async fn suite_timeout(&self, suite: &Suite, timeout: f64) {
+        self.styled(
+            &format!("Suite '{}' timed out after {timeout} seconds", suite.name()),
+            Some(Self::RED),
+            "\n",
+        )
+        .await;
+    }
+
     /// Handle `session_dry_run_command`.
     async fn session_dry_run_command(&self, command: &str) {
         self.styled("Command:", Some(Self::CYAN), "\n").await;
@@ -439,6 +473,13 @@ impl SimpleUi {
         let _ = timeout;
     }
 
+    /// Handle `test_started`.
+    pub async fn test_started(&self, test: &Test) {
+        self.console
+            .styled(&format!("{}: ", test.name()), Some(ConsoleUi::WHITE), "")
+            .await;
+    }
+
     /// Handle `test_completed`.
     pub async fn test_completed(&self, results: &TestResults) {
         let mut state = self.state.lock().await;
@@ -500,6 +541,15 @@ impl VerboseUi {
             .await;
     }
 
+    /// Handle `test_started`.
+    pub async fn test_started(&self, test: &Test) {
+        self.console.print_section(test.name()).await;
+        self.console.styled("Executing: ", None, "").await;
+        self.console
+            .styled(&test.full_command(), None, "\n\n")
+            .await;
+    }
+
     /// Handle `test_timed_out`.
     pub async fn test_timed_out(&self) {
         *self.timed_out.lock().await = true;
@@ -556,6 +606,28 @@ impl ParallelUi {
             console: ConsoleUi::new(no_colors, printer),
             state: tokio::sync::Mutex::new(ParallelState::default()),
         }
+    }
+
+    /// Handle `sut_not_responding`: sets state consumed by the next
+    /// `test_completed`, which prints the message as that test's result.
+    pub async fn sut_not_responding(&self) {
+        self.state.lock().await.sut_not_responding = true;
+    }
+
+    /// Handle `kernel_panic`: sets state consumed by the next
+    /// `test_completed`, which prints the message as that test's result.
+    pub async fn kernel_panic(&self) {
+        self.state.lock().await.kernel_panic = true;
+    }
+
+    /// Handle `kernel_tainted`.
+    pub async fn kernel_tainted(&self, message: &str) {
+        self.state.lock().await.kernel_tainted = Some(message.to_owned());
+    }
+
+    /// Handle `test_timed_out`.
+    pub async fn test_timed_out(&self) {
+        self.state.lock().await.timed_out = true;
     }
 
     /// Handle `suite_started`, listing tests that run in parallel.
@@ -619,7 +691,6 @@ impl ParallelUi {
                 .styled("kernel panic", Some(ConsoleUi::RED), "\n")
                 .await;
         } else {
-            self.console.styled(&prefix, None, "").await;
             self.console.styled(msg, Some(color), "").await;
             if tainted.is_some() {
                 self.console.styled(" | ", None, "").await;
@@ -638,12 +709,11 @@ impl ParallelUi {
     }
 }
 
-/// Register the plain-string console handlers on `registry`.
-///
-/// Structured summaries (`session_completed`, `session_dry_run`,
-/// `suite_started`, `suite_completed`, ...) need [`Suite`] data the
-/// string-only registry cannot carry; render those with direct calls.
-/// `session_started` expects `"<num_suites>\n<tmpdir>"`.
+/// Register the base console handlers on `registry`: session/SUT/command
+/// lifecycle, suite lifecycle, and the final summary/dry-run reports.
+/// Every [`ConsoleUi`]-family UI shares these; [`attach_simple`],
+/// [`attach_verbose`], and [`attach_parallel`] layer the mode-specific
+/// scheduler events on top of the same registry.
 ///
 /// # Errors
 ///
@@ -654,12 +724,233 @@ pub async fn attach_console(
 ) -> Result<(), kirk_core::KirkError> {
     attach_session_events(ui, registry).await?;
     attach_command_events(ui, registry).await?;
+    attach_suite_events(ui, registry).await?;
     Ok(())
 }
 
-fn console_handler<F, Fut>(ui: &Arc<ConsoleUi>, call: F) -> kirk_events::Handler
+/// Register `SimpleUi`'s scheduler-owned events on `registry`, in addition
+/// to [`attach_console`].
+///
+/// # Errors
+///
+/// Returns [`KirkError`](kirk_core::KirkError) when a registration fails.
+pub async fn attach_simple(
+    ui: &Arc<SimpleUi>,
+    registry: &EventRegistry,
+) -> Result<(), kirk_core::KirkError> {
+    registry
+        .register(
+            "sut_not_responding",
+            simple_handler(ui, |ui, _| async move {
+                ui.sut_not_responding().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "kernel_panic",
+            simple_handler(ui, |ui, _| async move {
+                ui.kernel_panic().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "kernel_tainted",
+            simple_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(message) = payload {
+                    ui.kernel_tainted(&message).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_timed_out",
+            simple_handler(ui, |ui, payload| async move {
+                if let EventPayload::TestTimedOut(_, timeout) = payload {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "timeouts are small; truncation to i64 seconds is harmless"
+                    )]
+                    ui.test_timed_out(timeout as i64).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_started",
+            simple_handler(ui, |ui, payload| async move {
+                if let EventPayload::Test(test) = payload {
+                    ui.test_started(&test).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_completed",
+            simple_handler(ui, |ui, payload| async move {
+                if let EventPayload::TestResults(results) = payload {
+                    ui.test_completed(&results).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Register `VerboseUi`'s scheduler-owned events on `registry`, in addition
+/// to [`attach_console`].
+///
+/// # Errors
+///
+/// Returns [`KirkError`](kirk_core::KirkError) when a registration fails.
+pub async fn attach_verbose(
+    ui: &Arc<VerboseUi>,
+    registry: &EventRegistry,
+) -> Result<(), kirk_core::KirkError> {
+    registry
+        .register(
+            "sut_stdout",
+            verbose_handler(ui, |ui, payload| async move {
+                if let EventPayload::SutStdout(_, data) = payload {
+                    ui.sut_stdout(&data).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "kernel_tainted",
+            verbose_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(message) = payload {
+                    ui.kernel_tainted(&message).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_timed_out",
+            verbose_handler(ui, |ui, _| async move {
+                ui.test_timed_out().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_started",
+            verbose_handler(ui, |ui, payload| async move {
+                if let EventPayload::Test(test) = payload {
+                    ui.test_started(&test).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_completed",
+            verbose_handler(ui, |ui, payload| async move {
+                if let EventPayload::TestResults(results) = payload {
+                    ui.test_completed(&results).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Register `ParallelUi`'s scheduler-owned events on `registry`, in addition
+/// to [`attach_console`].
+///
+/// # Errors
+///
+/// Returns [`KirkError`](kirk_core::KirkError) when a registration fails.
+pub async fn attach_parallel(
+    ui: &Arc<ParallelUi>,
+    registry: &EventRegistry,
+) -> Result<(), kirk_core::KirkError> {
+    registry
+        .register(
+            "sut_not_responding",
+            parallel_handler(ui, |ui, _| async move {
+                ui.sut_not_responding().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "kernel_panic",
+            parallel_handler(ui, |ui, _| async move {
+                ui.kernel_panic().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "kernel_tainted",
+            parallel_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(message) = payload {
+                    ui.kernel_tainted(&message).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "suite_started",
+            parallel_handler(ui, |ui, payload| async move {
+                if let EventPayload::Suite(suite) = payload {
+                    ui.print_parallel(&suite).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_timed_out",
+            parallel_handler(ui, |ui, _| async move {
+                ui.test_timed_out().await;
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_completed",
+            parallel_handler(ui, |ui, payload| async move {
+                if let EventPayload::TestResults(results) = payload {
+                    ui.test_completed(&results).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Build a handler over `ui`'s payload, for any `Arc<T>`-held UI.
+fn payload_handler<T, F, Fut>(ui: &Arc<T>, call: F) -> kirk_events::Handler
 where
-    F: Fn(Arc<ConsoleUi>, String) -> Fut + Send + Sync + Clone + 'static,
+    T: Send + Sync + 'static,
+    F: Fn(Arc<T>, EventPayload) -> Fut + Send + Sync + Clone + 'static,
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
     use kirk_events::{BoxFuture, EventArgs, HandlerResult};
@@ -667,14 +958,41 @@ where
     Arc::new(move |args: EventArgs| {
         let ui = ui.clone();
         let call = call.clone();
-        let message = args.message.clone().unwrap_or_default();
         Box::pin(async move {
-            call(ui, message).await;
+            call(ui, args.payload).await;
             Ok(())
         }) as BoxFuture<HandlerResult>
     })
 }
 
+fn simple_handler<F, Fut>(ui: &Arc<SimpleUi>, call: F) -> kirk_events::Handler
+where
+    F: Fn(Arc<SimpleUi>, EventPayload) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    payload_handler(ui, call)
+}
+
+fn verbose_handler<F, Fut>(ui: &Arc<VerboseUi>, call: F) -> kirk_events::Handler
+where
+    F: Fn(Arc<VerboseUi>, EventPayload) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    payload_handler(ui, call)
+}
+
+fn parallel_handler<F, Fut>(ui: &Arc<ParallelUi>, call: F) -> kirk_events::Handler
+where
+    F: Fn(Arc<ParallelUi>, EventPayload) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    payload_handler(ui, call)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one registration per session/SUT event; splitting would scatter the mapping"
+)]
 async fn attach_session_events(
     ui: &Arc<ConsoleUi>,
     registry: &EventRegistry,
@@ -682,8 +1000,10 @@ async fn attach_session_events(
     registry
         .register(
             "session_restore",
-            console_handler(ui, |ui, msg| async move {
-                ui.session_restore(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(path) = payload {
+                    ui.session_restore(&path).await;
+                }
             }),
             false,
         )
@@ -691,11 +1011,10 @@ async fn attach_session_events(
     registry
         .register(
             "session_started",
-            console_handler(ui, |ui, msg| async move {
-                let mut parts = msg.splitn(2, '\n');
-                let count: usize = parts.next().unwrap_or("1").parse().unwrap_or(1);
-                let tmpdir = parts.next().unwrap_or("");
-                ui.session_started(count, tmpdir).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::SessionStarted(count, tmpdir) = payload {
+                    ui.session_started(count, &tmpdir).await;
+                }
             }),
             false,
         )
@@ -703,7 +1022,7 @@ async fn attach_session_events(
     registry
         .register(
             "session_stopped",
-            console_handler(ui, |ui, _| async move {
+            payload_handler(ui, |ui, _| async move {
                 ui.session_stopped().await;
             }),
             false,
@@ -712,8 +1031,10 @@ async fn attach_session_events(
     registry
         .register(
             "sut_start",
-            console_handler(ui, |ui, msg| async move {
-                ui.sut_start(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(name) = payload {
+                    ui.sut_start(&name).await;
+                }
             }),
             false,
         )
@@ -721,8 +1042,10 @@ async fn attach_session_events(
     registry
         .register(
             "sut_stop",
-            console_handler(ui, |ui, msg| async move {
-                ui.sut_stop(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(name) = payload {
+                    ui.sut_stop(&name).await;
+                }
             }),
             false,
         )
@@ -730,8 +1053,10 @@ async fn attach_session_events(
     registry
         .register(
             "sut_restart",
-            console_handler(ui, |ui, msg| async move {
-                ui.sut_restart(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(name) = payload {
+                    ui.sut_restart(&name).await;
+                }
             }),
             false,
         )
@@ -739,8 +1064,10 @@ async fn attach_session_events(
     registry
         .register(
             "session_warning",
-            console_handler(ui, |ui, msg| async move {
-                ui.session_warning(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(message) = payload {
+                    ui.session_warning(&message).await;
+                }
             }),
             false,
         )
@@ -748,8 +1075,10 @@ async fn attach_session_events(
     registry
         .register(
             "session_error",
-            console_handler(ui, |ui, msg| async move {
-                ui.session_error(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(error) = payload {
+                    ui.session_error(&error).await;
+                }
             }),
             false,
         )
@@ -757,8 +1086,32 @@ async fn attach_session_events(
     registry
         .register(
             "session_dry_run_command",
-            console_handler(ui, |ui, msg| async move {
-                ui.session_dry_run_command(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(command) = payload {
+                    ui.session_dry_run_command(&command).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "session_dry_run",
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Suites(suites) = payload {
+                    ui.session_dry_run(&suites).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "session_completed",
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::SessionCompleted(results) = payload {
+                    ui.session_completed(&results).await;
+                }
             }),
             false,
         )
@@ -773,8 +1126,10 @@ async fn attach_command_events(
     registry
         .register(
             "run_cmd_start",
-            console_handler(ui, |ui, msg| async move {
-                ui.run_cmd_start(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(cmd) = payload {
+                    ui.run_cmd_start(&cmd).await;
+                }
             }),
             false,
         )
@@ -782,8 +1137,10 @@ async fn attach_command_events(
     registry
         .register(
             "run_cmd_stdout",
-            console_handler(ui, |ui, msg| async move {
-                ui.run_cmd_stdout(&msg).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Text(data) = payload {
+                    ui.run_cmd_stdout(&data).await;
+                }
             }),
             false,
         )
@@ -791,8 +1148,50 @@ async fn attach_command_events(
     registry
         .register(
             "run_cmd_stop",
-            console_handler(ui, |ui, msg| async move {
-                ui.run_cmd_stop(msg.parse().unwrap_or_default()).await;
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::RunCmdStop(_, _, returncode) = payload {
+                    ui.run_cmd_stop(returncode).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
+async fn attach_suite_events(
+    ui: &Arc<ConsoleUi>,
+    registry: &EventRegistry,
+) -> Result<(), kirk_core::KirkError> {
+    registry
+        .register(
+            "suite_started",
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::Suite(suite) = payload {
+                    ui.suite_started(&suite).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "suite_completed",
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::SuiteCompleted(results, exec_time) = payload {
+                    ui.suite_completed(&results, exec_time).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "suite_timeout",
+            payload_handler(ui, |ui, payload| async move {
+                if let EventPayload::SuiteTimeout(suite, timeout) = payload {
+                    ui.suite_timeout(&suite, timeout).await;
+                }
             }),
             false,
         )
@@ -940,8 +1339,17 @@ mod tests {
         tokio::task::yield_now().await;
         let out = printer.contents();
         assert!(out.contains("Following tests will run in parallel:"));
-        assert!(out.contains("p1 (1/2): "));
-        assert!(out.contains("pass"));
+        assert_eq!(
+            out.matches("p1 (1/2): ").count(),
+            1,
+            "prefix must appear once"
+        );
+        let line = out
+            .lines()
+            .find(|line| line.starts_with("p1 (1/2): "))
+            .expect("result line");
+        assert_eq!(line.matches("p1 (1/2): ").count(), 1);
+        assert!(line.contains("pass"));
     }
 
     #[tokio::test]
