@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use kirk_com::{CmdResult, ComChannel, Registry};
+use kirk_com::{CmdResult, ComChannel, IOBuffer, Registry};
 use kirk_com_ltx::LtxChannel;
 use kirk_com_qemu::QemuChannel;
 use kirk_com_shell::ShellChannel;
@@ -23,7 +23,7 @@ use kirk_plugin::Plugin as _;
 use kirk_scheduler::{Framework as SchedFramework, StdoutBuffer, Sut as SchedSut};
 use kirk_session::{RunOptions, Session, SessionConfig, SessionFramework, SessionSut};
 use kirk_support::{JSONFileMonitor, TempDir, attach_console};
-use kirk_sut::{GenericSut, Sut as SutTrait};
+use kirk_sut::{GenericSut, RedirectSutStdout, Sut as SutTrait};
 use tokio::sync::Mutex;
 
 use super::args::{Args, RC_ERROR, RC_INTERRUPT, RC_OK};
@@ -210,12 +210,15 @@ pub struct CliSut {
     name: String,
     /// Cached parallel-execution support.
     parallel: bool,
+    /// Shared registry, used to redirect reset-helper output through
+    /// `sut_stdout` on `restart`, matching upstream.
+    events: EventRegistry,
 }
 
 impl CliSut {
     /// Wrap a shared SUT, caching the sync accessors.
     #[must_use]
-    fn new(sut: SutHandle) -> Self {
+    fn new(sut: SutHandle, events: EventRegistry) -> Self {
         let (name, parallel) = sut.try_lock().map_or_else(
             |_| (String::from("default"), true),
             |guard| {
@@ -231,6 +234,7 @@ impl CliSut {
             sut,
             name,
             parallel,
+            events,
         }
     }
 }
@@ -281,7 +285,12 @@ impl SchedSut for CliSut {
     }
 
     async fn restart(&self) -> Result<(), KirkError> {
-        self.sut.lock().await.restart(None).await
+        let redirect: Arc<dyn IOBuffer> = Arc::new(RedirectSutStdout::new(
+            &self.name,
+            false,
+            self.events.clone(),
+        ));
+        self.sut.lock().await.restart(Some(redirect)).await
     }
 
     async fn get_info(&self) -> Result<HashMap<String, String>, KirkError> {
@@ -455,13 +464,13 @@ pub async fn run_session(
     drop(registry);
 
     let shared: SutHandle = Arc::new(Mutex::new(sut));
-    let cli_sut = CliSut::new(Arc::clone(&shared));
+    let events = EventRegistry::new();
+    let cli_sut = CliSut::new(Arc::clone(&shared), events.clone());
     let cli_framework = CliFramework {
         framework: LtpFramework::new(0.0, secs(args.exec_timeout)),
         sut: shared,
     };
 
-    let events = EventRegistry::new();
     // Every mode shares the base session/SUT/suite/command handlers; the
     // selected `UiKind` additionally wires its scheduler-owned events
     // (test_started/test_completed/kernel_*/...) on the same registry.
@@ -548,6 +557,147 @@ pub async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kirk_events::{BoxFuture, EventArgs, EventPayload, HandlerResult};
+    use kirk_sut::SUT_STDOUT_EVENT;
+
+    /// Channel whose `stop` (the reset helper, from `restart`'s
+    /// stop-then-start) writes output before failing, so a test can prove
+    /// `CliSut::restart` delivers that output instead of discarding it.
+    struct FailingResetChannel;
+
+    impl kirk_plugin::Plugin for FailingResetChannel {
+        fn name(&self) -> &'static str {
+            "shell"
+        }
+
+        fn config_help(&self) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        fn setup(&mut self, _cfg: &HashMap<String, String>) -> Result<(), KirkError> {
+            Ok(())
+        }
+
+        fn clone_box(&self, _name: &str) -> Box<dyn kirk_plugin::Plugin> {
+            Box::new(Self)
+        }
+    }
+
+    #[async_trait]
+    impl ComChannel for FailingResetChannel {
+        fn parallel_execution(&self) -> bool {
+            false
+        }
+
+        async fn active(&self) -> bool {
+            true
+        }
+
+        async fn communicate(
+            &mut self,
+            _iobuffer: Option<Arc<dyn IOBuffer>>,
+        ) -> Result<(), KirkError> {
+            Ok(())
+        }
+
+        async fn stop(&mut self, iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
+            if let Some(iobuffer) = iobuffer {
+                iobuffer.write("reset helper output\n").await?;
+            }
+            Err(KirkError::Communication(String::from(
+                "reset command exited with status 1",
+            )))
+        }
+
+        async fn ping(&mut self) -> Result<f64, KirkError> {
+            Ok(0.0)
+        }
+
+        async fn run_command(
+            &mut self,
+            command: &str,
+            _cwd: Option<&str>,
+            _env: Option<&HashMap<String, String>>,
+            _iobuffer: Option<Arc<dyn IOBuffer>>,
+        ) -> Result<Option<CmdResult>, KirkError> {
+            Ok(Some(CmdResult {
+                command: command.to_owned(),
+                returncode: 0,
+                stdout: String::new(),
+                exec_time: 0.0,
+            }))
+        }
+
+        async fn fetch_file(&mut self, _target_path: &str) -> Result<Vec<u8>, KirkError> {
+            Ok(Vec::new())
+        }
+
+        fn clone_channel_box(&self, _new_name: &str) -> Box<dyn ComChannel> {
+            Box::new(Self)
+        }
+    }
+
+    /// Restart output must reach `sut_stdout` even though the reset helper
+    /// fails: proves `CliSut::restart` wires a real redirect (not `None`)
+    /// into `GenericSut::restart`.
+    #[tokio::test]
+    async fn restart_delivers_output_before_failing() {
+        let mut registry = Registry::new();
+        registry.register(Box::new(FailingResetChannel));
+        let mut sut = GenericSut::new();
+        sut.setup_with_registry(&HashMap::new(), &registry)
+            .expect("fake channel must attach");
+        let shared: SutHandle = Arc::new(Mutex::new(sut));
+
+        let events = EventRegistry::new();
+        let captured: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let store = Arc::clone(&captured);
+        let handler: Arc<dyn Fn(EventArgs) -> BoxFuture<HandlerResult> + Send + Sync> =
+            Arc::new(move |args: EventArgs| {
+                let store = Arc::clone(&store);
+                Box::pin(async move {
+                    if let EventPayload::SutStdout(_, data) = args.payload {
+                        store
+                            .lock()
+                            .map_err(|_| String::from("event store poisoned"))?
+                            .push(data);
+                    }
+                    Ok(())
+                }) as BoxFuture<HandlerResult>
+            });
+        events
+            .register(SUT_STDOUT_EVENT, handler, false)
+            .await
+            .expect("register handler");
+
+        let pump = {
+            let events = events.clone();
+            tokio::spawn(async move { events.start().await })
+        };
+
+        let cli_sut = CliSut::new(Arc::clone(&shared), events.clone());
+        let error = cli_sut.restart().await.expect_err("reset helper fails");
+        assert!(error.to_string().contains("status 1"));
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if !captured.lock().expect("event store lock").is_empty() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("sut_stdout delivery");
+        events.stop();
+        pump.await.expect("event pump");
+
+        assert_eq!(
+            captured.lock().expect("event store lock").as_slice(),
+            ["reset helper output\n"]
+        );
+    }
 
     #[test]
     fn ui_selection() {
