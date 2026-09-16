@@ -39,6 +39,7 @@ pub struct FakeSut {
     state: Arc<FakeState>,
     taint_mode: Arc<AtomicBool>,
     hang: Arc<AtomicBool>,
+    restart_fails: Arc<AtomicBool>,
 }
 
 impl FakeSut {
@@ -64,6 +65,20 @@ impl FakeSut {
     pub fn hanging() -> Self {
         Self {
             hang: Arc::new(AtomicBool::new(true)),
+            ..Self::default()
+        }
+    }
+
+    /// Taints after execution, then fails the attempted restart.
+    #[must_use]
+    #[allow(
+        dead_code,
+        reason = "test helpers compile as a standalone integration-test target"
+    )]
+    pub fn tainting_with_failed_restart() -> Self {
+        Self {
+            taint_mode: Arc::new(AtomicBool::new(true)),
+            restart_fails: Arc::new(AtomicBool::new(true)),
             ..Self::default()
         }
     }
@@ -189,6 +204,9 @@ impl Sut for FakeSut {
 
     async fn restart(&self) -> Result<(), KirkError> {
         self.state.restarts.fetch_add(1, Ordering::SeqCst);
+        if self.restart_fails.load(Ordering::SeqCst) {
+            return Err(KirkError::Communication(String::from("restart failed")));
+        }
         Ok(())
     }
 

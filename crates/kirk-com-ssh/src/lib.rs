@@ -37,7 +37,7 @@ use zeroize::Zeroizing;
 pub use config::SshConfig;
 use config::{
     DEFAULT_MAX_SESSIONS, FETCH_SIZE_CAP, IO_TIMEOUT, OutputCollector, PROBE_TIMEOUT,
-    RESET_TIMEOUT, build_remote_command, parse_max_sessions, quote_sh, split_argv,
+    build_remote_command, parse_max_sessions, quote_sh, split_argv,
 };
 
 type Session = Handle<HostKeyVerifier>;
@@ -175,7 +175,7 @@ impl SshChannel {
         DEFAULT_MAX_SESSIONS
     }
 
-    /// Run the configured `reset_cmd` locally via argv with [`RESET_TIMEOUT`].
+    /// Run the configured `reset_cmd` locally via argv.
     async fn run_reset(
         reset_cmd: &str,
         iobuffer: Option<Arc<dyn IOBuffer>>,
@@ -193,34 +193,61 @@ impl SshChannel {
             .spawn()
             .map_err(|err| comm(format!("reset command failed to start: {err}")))?;
         let mut stdout = child.stdout.take();
-        let collect = async {
-            let mut buf = [0_u8; 1024];
-            {
+        let mut stderr = child.stderr.take();
+        let stdout_buffer = iobuffer.clone();
+        let collect_stdout = async {
+            if let Some(stream) = stdout.as_mut() {
                 use tokio::io::AsyncReadExt as _;
-                if let Some(stream) = stdout.as_mut() {
-                    loop {
-                        let n = stream
-                            .read(&mut buf)
-                            .await
-                            .map_err(|err| comm(err.to_string()))?;
-                        if n == 0 {
-                            break;
-                        }
-                        if let Some(iobuffer) = iobuffer.as_ref() {
-                            iobuffer.write(&String::from_utf8_lossy(&buf[..n])).await?;
-                        }
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let len = stream
+                        .read(&mut chunk)
+                        .await
+                        .map_err(|err| comm(err.to_string()))?;
+                    if len == 0 {
+                        break;
+                    }
+                    if let Some(iobuffer) = stdout_buffer.as_ref() {
+                        iobuffer
+                            .write(&String::from_utf8_lossy(&chunk[..len]))
+                            .await?;
                     }
                 }
             }
-            child
-                .wait()
-                .await
-                .map_err(|err| comm(err.to_string()))
-                .map(|_| ())
+            Ok::<_, KirkError>(())
         };
-        timeout(RESET_TIMEOUT, collect)
-            .await
-            .map_err(|_| timed_out("reset command"))?
+        let stderr_buffer = iobuffer;
+        let collect_stderr = async {
+            if let Some(stream) = stderr.as_mut() {
+                use tokio::io::AsyncReadExt as _;
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let len = stream
+                        .read(&mut chunk)
+                        .await
+                        .map_err(|err| comm(err.to_string()))?;
+                    if len == 0 {
+                        break;
+                    }
+                    if let Some(iobuffer) = stderr_buffer.as_ref() {
+                        iobuffer
+                            .write(&String::from_utf8_lossy(&chunk[..len]))
+                            .await?;
+                    }
+                }
+            }
+            Ok::<_, KirkError>(())
+        };
+        let wait = async { child.wait().await.map_err(|err| comm(err.to_string())) };
+        let ((), (), status) = tokio::try_join!(collect_stdout, collect_stderr, wait)?;
+        if status.success() {
+            Ok(())
+        } else {
+            let status = status
+                .code()
+                .map_or_else(|| status.to_string(), |code| code.to_string());
+            Err(comm(format!("reset command exited with status {status}")))
+        }
     }
 }
 
@@ -519,4 +546,52 @@ async fn authenticate_with_key(
     .await
     .map_err(|_| timed_out("authentication"))?
     .map_err(|err| comm(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder(tokio::sync::Mutex<String>);
+
+    #[async_trait]
+    impl IOBuffer for Recorder {
+        async fn write(&self, data: &str) -> Result<(), KirkError> {
+            self.0.lock().await.push_str(data);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_waits_for_slow_successful_command() {
+        SshChannel::run_reset("sh -c 'sleep 0.02'", None)
+            .await
+            .expect("reset completes without a channel deadline");
+    }
+
+    #[tokio::test]
+    async fn reset_drains_stdout_and_stderr() {
+        let output = Arc::new(Recorder::default());
+
+        SshChannel::run_reset(
+            "sh -c 'yes stdout | head -c 65536; yes stderr | head -c 65536 >&2'",
+            Some(output.clone()),
+        )
+        .await
+        .expect("reset drains both pipes");
+
+        let captured = output.0.lock().await;
+        assert!(captured.contains("stdout"));
+        assert!(captured.contains("stderr"));
+    }
+
+    #[tokio::test]
+    async fn reset_reports_nonzero_exit_status() {
+        let error = SshChannel::run_reset("sh -c 'exit 7'", None)
+            .await
+            .expect_err("nonzero reset status must fail");
+
+        assert!(matches!(error, KirkError::Communication(message) if message.contains("status 7")));
+    }
 }

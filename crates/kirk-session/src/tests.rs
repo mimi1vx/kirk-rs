@@ -21,6 +21,8 @@ struct FakeSut {
     running: Mutex<bool>,
     root: bool,
     fault: Mutex<(u32, u32)>,
+    taint_calls: AtomicUsize,
+    restart_fails: bool,
 }
 
 impl FakeSut {
@@ -29,6 +31,16 @@ impl FakeSut {
             running: Mutex::new(false),
             root: false,
             fault: Mutex::new((0, 1)),
+            taint_calls: AtomicUsize::new(usize::MAX),
+            restart_fails: false,
+        }
+    }
+
+    fn tainting_with_failed_restart() -> Self {
+        Self {
+            taint_calls: AtomicUsize::new(0),
+            restart_fails: true,
+            ..Self::new()
         }
     }
 
@@ -50,7 +62,12 @@ impl FakeSut {
 #[async_trait]
 impl kirk_scheduler::Sut for FakeSut {
     async fn get_tainted_info(&self) -> Result<(i64, Vec<String>), KirkError> {
-        Ok((0, Vec::new()))
+        let calls = self.taint_calls.fetch_add(1, Ordering::SeqCst);
+        if calls == 0 {
+            Ok((0, Vec::new()))
+        } else {
+            Ok((1, vec![String::from("proprietary module was loaded")]))
+        }
     }
 
     async fn run_command(
@@ -76,7 +93,11 @@ impl kirk_scheduler::Sut for FakeSut {
     }
 
     async fn restart(&self) -> Result<(), KirkError> {
-        Ok(())
+        if self.restart_fails {
+            Err(KirkError::Communication(String::from("restart failed")))
+        } else {
+            Ok(())
+        }
     }
 
     async fn get_info(&self) -> Result<HashMap<String, String>, KirkError> {
@@ -414,6 +435,42 @@ async fn run_report_abort_persists_partial_results() {
         .unwrap_err();
     assert!(err.to_string().contains("dropped"));
     assert_eq!(report_len(&report).await, 2);
+}
+
+#[tokio::test]
+async fn run_report_persists_results_before_failed_restart() {
+    let root = sandbox("restart-abort");
+    let session = Session::new(
+        TempDir::new(Some(&root), 5).unwrap(),
+        FakeSut::tainting_with_failed_restart(),
+        FakeFramework::new(),
+        EventRegistry::new(),
+        SessionConfig {
+            exec_timeout: 30.0,
+            suite_timeout: 30.0,
+            workers: 1,
+            force_parallel: false,
+        },
+    );
+    let report = format!("{root}/report.json");
+
+    let error = session
+        .run(&RunOptions {
+            suites: vec![String::from("suite01")],
+            report_path: Some(report.clone()),
+            ..Default::default()
+        })
+        .await
+        .expect_err("restart failure must reach the session caller");
+
+    assert!(matches!(error, KirkError::Communication(message) if message == "restart failed"));
+    let text = tokio::fs::read_to_string(report).await.unwrap();
+    let data: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let results = data["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["test_fqn"], "test01");
+    assert_eq!(results[0]["test"]["passed"], 1);
+    assert_eq!(data["stats"]["passed"], 1);
 }
 
 #[tokio::test]

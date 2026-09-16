@@ -218,6 +218,9 @@ where
                 scheduled.await
             };
 
+            state.exec_times.push(start.elapsed().as_secs_f64());
+            state.tests.extend(self.inner.results().await);
+
             match round {
                 Ok(()) => {}
                 Err(
@@ -229,9 +232,6 @@ where
                 }
                 Err(error) => return Err(error),
             }
-
-            state.exec_times.push(start.elapsed().as_secs_f64());
-            state.tests.extend(self.inner.results().await);
 
             let done: HashSet<&str> = state
                 .tests

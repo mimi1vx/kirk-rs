@@ -114,6 +114,26 @@ async fn schedule_reboots_on_kernel_tainted() {
 }
 
 #[tokio::test]
+async fn failed_restart_keeps_completed_results() {
+    let sut = FakeSut::tainting_with_failed_restart();
+    let sched = scheduler(sut.clone(), 3600.0, 3600.0, 1);
+    let tests = vec![echo_test(0), echo_test(1)];
+
+    let error = sched
+        .schedule(&[suite("suite01", tests)])
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, KirkError::Communication(message) if message == "restart failed"));
+    assert_eq!(sut.restarts(), 1);
+    let results = sched.results().await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tests_results().len(), 1);
+    assert_eq!(results[0].tests_results()[0].test().name(), "test0");
+    assert!(results[0].exec_time() > 0.0);
+}
+
+#[tokio::test]
 async fn schedule_reboots_on_kernel_tainted_parallel() {
     let sut = FakeSut::tainting();
     let sched = scheduler(sut.clone(), 3600.0, 3600.0, 10);

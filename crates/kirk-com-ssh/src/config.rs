@@ -32,8 +32,6 @@ pub(crate) const FETCH_SIZE_CAP: usize = 16 * 1024 * 1024;
 pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for the `MaxSessions` probe and for `ping`.
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-/// Timeout for the local `reset_cmd` spawned by `stop`.
-pub(crate) const RESET_TIMEOUT: Duration = Duration::from_secs(10);
 /// Remote output marker that raises [`KirkError::KernelPanic`], mirroring upstream.
 const PANIC_MARKER: &str = "Kernel panic";
 
