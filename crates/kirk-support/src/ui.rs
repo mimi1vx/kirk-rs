@@ -530,6 +530,11 @@ impl VerboseUi {
         self.console.styled(data, None, "").await;
     }
 
+    /// Handle `test_stdout`, printing the test's output as it arrives.
+    pub async fn test_stdout(&self, data: &str) {
+        self.console.styled(data, None, "").await;
+    }
+
     /// Handle `kernel_tainted`.
     pub async fn kernel_tainted(&self, message: &str) {
         self.console
@@ -834,6 +839,17 @@ pub async fn attach_verbose(
             verbose_handler(ui, |ui, payload| async move {
                 if let EventPayload::Text(message) = payload {
                     ui.kernel_tainted(&message).await;
+                }
+            }),
+            false,
+        )
+        .await?;
+    registry
+        .register(
+            "test_stdout",
+            verbose_handler(ui, |ui, payload| async move {
+                if let EventPayload::TestStdout(_, data) = payload {
+                    ui.test_stdout(&data).await;
                 }
             }),
             false,
@@ -1317,6 +1333,20 @@ mod tests {
         assert!(out.contains("hello from sut"));
         assert!(out.contains("Tainted kernel"));
         assert!(out.contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn verbose_test_stdout_prints_chunks_in_order() {
+        let printer = Arc::new(VecPrinter::new());
+        let ui = VerboseUi::new(true, printer.clone());
+        ui.test_stdout("first chunk\n").await;
+        ui.test_stdout("second chunk\n").await;
+        ui.test_stdout("third chunk\n").await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            printer.contents(),
+            "first chunk\nsecond chunk\nthird chunk\n"
+        );
     }
 
     #[tokio::test]

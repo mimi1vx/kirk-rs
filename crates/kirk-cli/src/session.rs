@@ -260,20 +260,19 @@ impl SchedSut for CliSut {
         // one when the channel supports it (concurrent workers then run
         // fully overlapped), otherwise the exclusive channel itself for the
         // command's whole duration, matching prior serialized behavior.
+        let iobuffer: Arc<dyn IOBuffer> = Arc::new(capture.clone());
         let shared = self.sut.lock().await.channel()?.concurrent_handle();
-        let result = if let Some(mut handle) = shared {
-            handle.run_command(command, cwd, Some(env), None).await?
+        if let Some(mut handle) = shared {
+            handle
+                .run_command(command, cwd, Some(env), Some(iobuffer))
+                .await
         } else {
             let mut guard = self.sut.lock().await;
             guard
                 .channel_mut()?
-                .run_command(command, cwd, Some(env), None)
-                .await?
-        };
-        if let Some(row) = &result {
-            capture.push(&row.stdout).await;
+                .run_command(command, cwd, Some(env), Some(iobuffer))
+                .await
         }
-        Ok(result)
     }
 
     async fn ping(&self) -> Result<f64, KirkError> {

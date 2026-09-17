@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use kirk_com::CmdResult;
+use kirk_com::{CmdResult, IOBuffer};
 use kirk_core::KirkError;
 use kirk_core::data::Test;
 use kirk_core::results::TestResults;
@@ -63,15 +63,53 @@ pub(crate) enum TestStatus {
 /// Async stdout capture, mirroring upstream `RedirectTestStdout`.
 ///
 /// Passed into [`Sut::run_command`] so partial output survives the timeout
-/// arm that drops the command future.
-#[derive(Debug, Clone, Default)]
+/// arm that drops the command future. A buffer built via
+/// [`StdoutBuffer::streaming`] additionally fires `test_stdout` for its test
+/// on every [`StdoutBuffer::push`], so a `--verbose` UI can print output as
+/// it arrives; the plain [`Default`] buffer used by probes and test doubles
+/// only accumulates.
+#[derive(Clone, Default)]
 pub struct StdoutBuffer {
     inner: Arc<Mutex<String>>,
+    stream: Option<Arc<StreamTarget>>,
+}
+
+/// Where a streaming [`StdoutBuffer`] fires `test_stdout`.
+struct StreamTarget {
+    test: Test,
+    events: EventRegistry,
+}
+
+impl std::fmt::Debug for StdoutBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StdoutBuffer")
+            .field("streaming", &self.stream.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl StdoutBuffer {
-    /// Append `data` to the capture.
+    /// Build a buffer that fires `test_stdout` for `test` on every
+    /// [`StdoutBuffer::push`], in addition to accumulating.
+    #[must_use]
+    pub fn streaming(test: Test, events: EventRegistry) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(String::new())),
+            stream: Some(Arc::new(StreamTarget { test, events })),
+        }
+    }
+
+    /// Append `data` to the capture, firing `test_stdout` exactly once when
+    /// built via [`StdoutBuffer::streaming`].
     pub async fn push(&self, data: &str) {
+        if let Some(target) = &self.stream {
+            fire(
+                &target.events,
+                "test_stdout",
+                EventPayload::TestStdout(target.test.clone(), data.to_owned()),
+            )
+            .await;
+        }
         self.inner.lock().await.push_str(data);
     }
 
@@ -79,6 +117,15 @@ impl StdoutBuffer {
     #[must_use]
     async fn snapshot(&self) -> String {
         self.inner.lock().await.clone()
+    }
+}
+
+#[async_trait]
+impl IOBuffer for StdoutBuffer {
+    /// Forward to [`StdoutBuffer::push`]; always succeeds.
+    async fn write(&self, data: &str) -> Result<(), KirkError> {
+        self.push(data).await;
+        Ok(())
     }
 }
 
@@ -453,7 +500,7 @@ where
     fire(events, "test_started", EventPayload::Test(test.clone())).await;
     write_kmsg(shared, &test, None).await;
 
-    let capture = StdoutBuffer::default();
+    let capture = StdoutBuffer::streaming(test.clone(), events.clone());
     let outcome = exec_test(shared, events, test_timeout, &test, &capture).await;
 
     let Some(row) = outcome.row else {
@@ -769,5 +816,71 @@ mod tests {
     fn result_status_codes_match_upstream() {
         assert_eq!(ResultStatus::PASS, 0);
         assert_eq!(ResultStatus::CONF, 32);
+    }
+
+    #[tokio::test]
+    async fn default_buffer_accumulates_without_events() {
+        // Plain buffer, as used by probes (`write_kmsg`) and test doubles:
+        // no events registry attached, so `push` must not panic or block.
+        let buffer = StdoutBuffer::default();
+        buffer.push("id -u").await;
+        buffer.push(" output").await;
+        assert_eq!(buffer.snapshot().await, "id -u output");
+    }
+
+    #[tokio::test]
+    async fn streaming_buffer_accumulates_and_emits_once_in_order() {
+        let events = EventRegistry::new();
+        let test = Test::new("t1", "echo").expect("test");
+        let buffer = StdoutBuffer::streaming(test.clone(), events.clone());
+
+        let received: Arc<std::sync::Mutex<Vec<(Test, String)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let store = Arc::clone(&received);
+        let handler: kirk_events::Handler = Arc::new(move |args: kirk_events::EventArgs| {
+            let store = Arc::clone(&store);
+            Box::pin(async move {
+                if let EventPayload::TestStdout(test, data) = args.payload {
+                    store
+                        .lock()
+                        .map_err(|_| String::from("event store poisoned"))?
+                        .push((test, data));
+                }
+                Ok(())
+            }) as kirk_events::BoxFuture<kirk_events::HandlerResult>
+        });
+        events
+            .register("test_stdout", handler, false)
+            .await
+            .expect("register handler");
+
+        let runner = events.clone();
+        let pump = tokio::spawn(async move { runner.start().await });
+
+        buffer.push("hello ").await;
+        buffer.push("world").await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if received.lock().expect("event store lock").len() >= 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("event delivery");
+        events.stop();
+        pump.await.expect("event pump");
+
+        assert_eq!(buffer.snapshot().await, "hello world");
+        let got = received.lock().expect("event store lock").clone();
+        assert_eq!(
+            got,
+            vec![
+                (test.clone(), "hello ".to_owned()),
+                (test, "world".to_owned()),
+            ]
+        );
     }
 }

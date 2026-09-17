@@ -100,6 +100,51 @@ async fn verbose_streaming_shows_full_command() {
 }
 
 #[tokio::test]
+async fn verbose_streams_test_stdout_before_duration_footer() {
+    let fixture = Fixture::new("verbose-stream");
+    fixture.write_runtest(
+        "mysuite",
+        "test01 echo KIRK_STDOUT_MARKER_OK\ntest02 echo KIRK_STDOUT_MARKER_FAIL ; exit 1\n",
+    );
+    fixture.write_metadata(r#"{"tests": {"test01": {}, "test02": {}}}"#);
+
+    let (out, code) = run(&fixture, &["--run-suite", "mysuite", "--verbose"]).await;
+    assert_eq!(code, 0, "a failing test is not a session failure");
+
+    // Isolate test02's block on its own section header, so its marker is
+    // checked against its own command header/duration footer, not test01's.
+    let (block01, block02) = out
+        .split_once("      test02\n")
+        .expect("test02 section header present");
+
+    for (marker, block) in [
+        ("KIRK_STDOUT_MARKER_OK", block01),
+        ("KIRK_STDOUT_MARKER_FAIL", block02),
+    ] {
+        // The command header also echoes `marker` (it is `echo <marker>`),
+        // so isolate the body between the blank line that ends "Executing:
+        // ..." and the duration footer before counting.
+        let exec_pos = block
+            .find("Executing: ")
+            .unwrap_or_else(|| panic!("executing header missing for {marker}: {block}"));
+        let body_start = exec_pos
+            + block[exec_pos..].find("\n\n").unwrap_or_else(|| {
+                panic!("command header not blank-terminated for {marker}: {block}")
+            })
+            + 2;
+        let duration_pos = block[body_start..]
+            .find("Duration:")
+            .unwrap_or_else(|| panic!("duration footer missing for {marker}: {block}"));
+        let body = &block[body_start..body_start + duration_pos];
+        assert_eq!(
+            body.matches(marker).count(),
+            1,
+            "marker {marker} must appear exactly once between the command header and duration footer: {block}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn parallel_progress_counts_tests() {
     let fixture = Fixture::new("parallel");
     fixture.write_runtest("mysuite", "test01 true\ntest02 true\n");
