@@ -199,7 +199,7 @@ async fn run_command_supports_shell_syntax() {
         .expect("run expansion")
         .expect("expansion result");
     assert_eq!(res.returncode, 0);
-    assert!(!res.stdout.trim().is_empty());
+    assert_ne!(res.stdout.trim(), "");
 
     // Compound operator.
     let res = channel
