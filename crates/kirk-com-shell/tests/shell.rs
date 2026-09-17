@@ -300,6 +300,102 @@ async fn run_command_stop_during_sleep() {
     assert!(!channel.active().await);
 }
 
+#[cfg(unix)]
+fn extract_pid(text: &str, prefix: &str) -> Option<u32> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|rest| rest.trim().parse().ok())
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelling_command_kills_background_descendant() {
+    let channel = communicated().await;
+    let mut runner = channel.clone();
+    let buf = recorder();
+    let buf_for_task = buf.clone();
+
+    // Print the shell's own pid and a backgrounded descendant's pid, then
+    // keep the shell itself running so the command is still in flight when
+    // we cancel it, mirroring a scheduler timeout dropping the future.
+    let handle = tokio::spawn(async move {
+        runner
+            .run_command(
+                "echo shell=$$; (sleep 60) & echo child=$!; sleep 60",
+                None,
+                None,
+                Some(buf_for_task),
+            )
+            .await
+    });
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let (shell_pid, child_pid) = loop {
+        let text = buf.contents().await;
+        if let (Some(shell_pid), Some(child_pid)) =
+            (extract_pid(&text, "shell="), extract_pid(&text, "child="))
+        {
+            break (shell_pid, child_pid);
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "pids never appeared in output: {text:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    };
+
+    handle.abort();
+    let _ = handle.await;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline
+        && (process_alive(shell_pid) || process_alive(child_pid))
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(!process_alive(shell_pid), "shell process must be killed");
+    assert!(
+        !process_alive(child_pid),
+        "background descendant must be killed"
+    );
+
+    let mut channel = channel;
+    channel.stop(None).await.expect("stop");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn run_command_races_with_stop_from_the_very_start() {
+    // No artificial delay: `run_command` and `stop` start together so the
+    // registration-vs-shutdown race gets genuine chances to trigger across
+    // iterations on real OS threads.
+    for _ in 0..50 {
+        let channel = communicated().await;
+        let mut runner = channel.clone();
+        let mut stopper = channel.clone();
+
+        let run =
+            tokio::spawn(async move { runner.run_command("sleep 5", None, None, None).await });
+        let stop = tokio::spawn(async move { stopper.stop(None).await });
+
+        stop.await.expect("join stop").expect("stop");
+        match run.await.expect("join run") {
+            Ok(Some(res)) => assert_ne!(res.returncode, 0, "a raced command must not exit cleanly"),
+            Err(KirkError::Communication(_)) => {}
+            other => panic!("unexpected race outcome: {other:?}"),
+        }
+        assert!(!channel.active().await);
+    }
+}
+
 #[tokio::test]
 async fn run_command_parallel_echoes() {
     let channel = communicated().await;

@@ -24,7 +24,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use kirk_com::{CmdResult, ComChannel, IOBuffer};
@@ -45,6 +44,16 @@ const READ_CHUNK: usize = 8192;
 /// Marker scanned for in command output, mirroring upstream.
 const KERNEL_PANIC_MARKER: &str = "Kernel panic";
 
+/// Lifecycle state guarded by one lock: whether the channel is active and
+/// which pids are currently tracked. Keeping both under a single mutex is
+/// what lets registration and `stop()` agree atomically on whether a
+/// newly spawned process should be tracked or killed on sight.
+#[derive(Default)]
+struct LifecycleState {
+    active: bool,
+    pids: Vec<u32>,
+}
+
 /// Shared live state behind every [`ShellChannel`] handle.
 ///
 /// Handles are cheap clones (`Clone` shares the [`Inner`]); concurrent
@@ -52,35 +61,72 @@ const KERNEL_PANIC_MARKER: &str = "Kernel panic";
 /// upstream coroutines sharing one `ShellComChannel`.
 #[derive(Default)]
 struct Inner {
-    active: AtomicBool,
-    pids: std::sync::Mutex<Vec<u32>>,
+    state: std::sync::Mutex<LifecycleState>,
     fetch_lock: tokio::sync::Mutex<()>,
 }
 
+impl Inner {
+    fn lock(&self) -> std::sync::MutexGuard<'_, LifecycleState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Track `pid` iff the channel is still active, atomically with any
+    /// concurrent `stop()`. Returns `false` when shutdown won the race, in
+    /// which case the caller owns killing the process itself.
+    fn try_register(&self, pid: u32) -> bool {
+        let mut state = self.lock();
+        if !state.active {
+            return false;
+        }
+        state.pids.push(pid);
+        true
+    }
+
+    fn unregister(&self, pid: u32) {
+        self.lock().pids.retain(|tracked| *tracked != pid);
+    }
+}
+
+/// RAII guard for a spawned child's pid.
+///
+/// Armed by default: dropping it kills the process group, covering
+/// cancellation (the owning future is dropped before completion) and
+/// pre-reap errors. [`TrackedProcess::disarm`] removes tracking without
+/// signalling once `child.wait()` has already reaped the process.
 struct TrackedProcess {
     pid: u32,
     inner: Arc<Inner>,
+    armed: bool,
 }
 
 impl TrackedProcess {
-    fn new(pid: u32, inner: Arc<Inner>) -> Self {
-        inner
-            .pids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(pid);
-        Self { pid, inner }
+    /// Register `pid`, or `Err(())` if the channel is no longer active.
+    fn register(pid: u32, inner: Arc<Inner>) -> Result<Self, ()> {
+        if inner.try_register(pid) {
+            Ok(Self {
+                pid,
+                inner,
+                armed: true,
+            })
+        } else {
+            Err(())
+        }
+    }
+
+    /// Stop tracking without signalling; the process is already reaped.
+    fn disarm(mut self) {
+        self.armed = false;
     }
 }
 
 impl Drop for TrackedProcess {
     fn drop(&mut self) {
-        self.inner
-            .pids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|tracked| *tracked != self.pid);
-        kill_process_group(self.pid);
+        self.inner.unregister(self.pid);
+        if self.armed {
+            kill_process_group(self.pid);
+        }
     }
 }
 
@@ -106,7 +152,7 @@ impl ShellChannel {
 
     /// Whether the inner session is active.
     fn is_active(&self) -> bool {
-        self.inner.active.load(Ordering::SeqCst)
+        self.inner.lock().active
     }
 }
 
@@ -259,32 +305,34 @@ impl ComChannel for ShellChannel {
     ///
     /// Returns [`KirkError::Communication`] when already active.
     async fn communicate(&mut self, _iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
-        if self.inner.active.swap(true, Ordering::SeqCst) {
+        let mut state = self.inner.lock();
+        if state.active {
             return Err(KirkError::Communication(String::from("Shell is running")));
         }
+        state.active = true;
         Ok(())
     }
 
     /// Stop communication, killing every tracked process group.
     ///
     /// Idempotent: stopping an inactive channel succeeds without doing
-    /// anything. Waits briefly for an in-flight `fetch_file`, mirroring
-    /// upstream.
+    /// anything. Flips `active` off before killing anything, so any
+    /// `run_command` still racing to register a pid atomically loses and
+    /// kills its own process instead of surviving untracked. Waits briefly
+    /// for an in-flight `fetch_file`, mirroring upstream.
     ///
     /// # Errors
     ///
     /// Never fails; kill errors are best effort.
     async fn stop(&mut self, _iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
-        if !self.is_active() {
-            return Ok(());
-        }
-        let pids = std::mem::take(
-            &mut *self
-                .inner
-                .pids
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let pids = {
+            let mut state = self.inner.lock();
+            if !state.active {
+                return Ok(());
+            }
+            state.active = false;
+            std::mem::take(&mut state.pids)
+        };
         for pid in &pids {
             kill_process_group(*pid);
         }
@@ -299,7 +347,6 @@ impl ComChannel for ShellChannel {
         {
             let _guard = self.inner.fetch_lock.lock().await;
         }
-        self.inner.active.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -396,7 +443,16 @@ impl ComChannel for ShellChannel {
         let pid = child
             .id()
             .ok_or_else(|| KirkError::Communication(String::from("spawned process has no pid")))?;
-        let _tracked = TrackedProcess::new(pid, Arc::clone(&self.inner));
+        let Ok(tracked) = TrackedProcess::register(pid, Arc::clone(&self.inner)) else {
+            // `stop()` won the race between our activity check and
+            // spawning: kill what we just started and reap it so it
+            // doesn't survive as an untracked orphan.
+            kill_process_group(pid);
+            let _ = child.wait().await;
+            return Err(KirkError::Communication(String::from(
+                "Shell was stopped before the command could start",
+            )));
+        };
 
         let start = std::time::Instant::now();
         let mut used = 0usize;
@@ -438,6 +494,8 @@ impl ComChannel for ShellChannel {
             .wait()
             .await
             .map_err(|err| KirkError::Communication(err.to_string()))?;
+        // The process is reaped: no signal is needed anymore, only bookkeeping.
+        tracked.disarm();
 
         if saw_panic {
             return Err(KirkError::KernelPanic(String::from(
@@ -528,12 +586,7 @@ mod tests {
 
         assert!(result.is_err(), "command must still be running at timeout");
         assert!(
-            channel
-                .inner
-                .pids
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_empty(),
+            channel.inner.lock().pids.is_empty(),
             "cancelling run_command must remove its tracked pid"
         );
     }

@@ -179,6 +179,10 @@ pub(crate) fn decode_one(buf: &[u8]) -> Result<Option<(Vec<Field>, usize)>, Kirk
     }
 }
 
+/// Error surfaced once a send is interrupted mid-transmission.
+const DESYNC_ERROR: &str = "LTX connection desynchronized by an interrupted send; \
+    reconnect required";
+
 #[derive(Debug)]
 struct Pending {
     id: u64,
@@ -193,27 +197,32 @@ struct State {
     fatal: Option<String>,
 }
 
-struct PendingBatch<'a> {
-    state: tokio::sync::MutexGuard<'a, State>,
-    ids: Vec<u64>,
-    first_id: u64,
+/// Marks the connection desynchronized unless [`SendGuard::commit`] runs
+/// first.
+///
+/// A batch's ids and pending entries are registered under [`State`] before
+/// transmission starts; once that happens, a partial write may already have
+/// reached (and been acted on by) the peer, so a write failure or a
+/// cancelled send can no longer roll back safely — a fresh FIFO stream is
+/// the only safe recovery, and ids never get reused. `desynced` is a plain
+/// `AtomicBool` deliberately: [`Drop::drop`] can't `.await` the `State`
+/// mutex, and a cancelled send must still be able to mark the connection
+/// desynchronized synchronously.
+struct SendGuard<'a> {
+    shared: &'a Shared,
     committed: bool,
 }
 
-impl PendingBatch<'_> {
-    fn commit(mut self) -> Vec<u64> {
+impl SendGuard<'_> {
+    fn commit(mut self) {
         self.committed = true;
-        std::mem::take(&mut self.ids)
     }
 }
 
-impl Drop for PendingBatch<'_> {
+impl Drop for SendGuard<'_> {
     fn drop(&mut self) {
         if !self.committed {
-            self.state
-                .pending
-                .retain(|pending| !self.ids.contains(&pending.id));
-            self.state.next_id = self.first_id;
+            self.shared.desynced.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -221,8 +230,13 @@ impl Drop for PendingBatch<'_> {
 #[derive(Debug)]
 struct Shared {
     state: Mutex<State>,
+    /// Serializes the FIFO write phase of concurrent `send()` batches so
+    /// their bytes never interleave on the wire; the `state` mutex above is
+    /// never held while this one is (or while awaiting the write itself).
+    write: Mutex<()>,
     stop: AtomicBool,
     running: AtomicBool,
+    desynced: AtomicBool,
 }
 
 /// Multiplexes [`Request`]s over an input/output FIFO pair.
@@ -250,8 +264,10 @@ impl Ltx {
                     next_id: 0,
                     fatal: None,
                 }),
+                write: Mutex::new(()),
                 stop: AtomicBool::new(false),
                 running: AtomicBool::new(false),
+                desynced: AtomicBool::new(false),
             }),
             poll: Arc::new(Mutex::new(None)),
         }
@@ -263,7 +279,19 @@ impl Ltx {
         self.shared.running.load(Ordering::SeqCst)
     }
 
+    /// Whether an interrupted send left the FIFO stream in an unknown state.
+    /// Only [`Ltx::connect`] against a fresh stream clears this.
+    #[must_use]
+    fn desynchronized(&self) -> bool {
+        self.shared.desynced.load(Ordering::SeqCst)
+    }
+
     /// Start the poll task; a no-op when already connected.
+    ///
+    /// Establishing a fresh connection resets all local protocol state
+    /// (pending requests, buffered replies, the id counter, the fatal
+    /// marker, and desynchronization) since it targets a fresh FIFO stream
+    /// that shares no history with the previous one.
     ///
     /// # Errors
     ///
@@ -279,9 +307,13 @@ impl Ltx {
         Fifo::open_read(&self.outfile)?;
 
         self.shared.stop.store(false, Ordering::SeqCst);
+        self.shared.desynced.store(false, Ordering::SeqCst);
         {
             let mut state = self.shared.state.lock().await;
             state.fatal = None;
+            state.pending.clear();
+            state.replies.clear();
+            state.next_id = 0;
         }
         let task = self.clone();
         let mut poll = self.poll.lock().await;
@@ -326,10 +358,18 @@ impl Ltx {
     /// Pack requests, queue them, and write them to the input FIFO,
     /// preserving order. Returns the request ids.
     ///
+    /// Registration (building ids, pushing to `pending`) holds the `state`
+    /// mutex only briefly; it is released before the FIFO write itself, so
+    /// the poll task can keep dispatching replies while this write is
+    /// stalled on backpressure. A dedicated `write` mutex serializes the
+    /// registration-plus-transmission of concurrent batches instead, so
+    /// their bytes never interleave on the wire.
+    ///
     /// # Errors
     ///
     /// Returns [`KirkError::Ltx`] when no requests are given, when not
-    /// connected, or when packing/writing fails.
+    /// connected, when desynchronized by a prior interrupted send, or when
+    /// packing/writing fails (which itself desynchronizes the connection).
     async fn send(&self, requests: Vec<Request>) -> Result<Vec<u64>, KirkError> {
         if requests.is_empty() {
             return Err(KirkError::Ltx("No requests given".to_string()));
@@ -337,11 +377,8 @@ impl Ltx {
         if !self.connected() {
             return Err(KirkError::Ltx("Client is not connected to LTX".to_string()));
         }
-        {
-            let state = self.shared.state.lock().await;
-            if let Some(fatal) = &state.fatal {
-                return Err(KirkError::Ltx(fatal.clone()));
-            }
+        if self.desynchronized() {
+            return Err(KirkError::Ltx(DESYNC_ERROR.to_string()));
         }
 
         let mut packed = Vec::new();
@@ -349,30 +386,44 @@ impl Ltx {
             packed.extend_from_slice(&request.pack()?);
         }
 
-        let mut state = self.shared.state.lock().await;
-        let first_id = state.next_id;
-        let count = u64::try_from(requests.len())
-            .map_err(|_| KirkError::Ltx("request count does not fit in u64".to_string()))?;
-        state
-            .next_id
-            .checked_add(count)
-            .ok_or_else(|| KirkError::Ltx("request id overflow".to_string()))?;
-        let mut ids = Vec::with_capacity(requests.len());
-        for request in requests {
-            let id = state.next_id;
-            state.next_id += 1;
-            ids.push(id);
-            state.pending.push_back(Pending { id, request });
+        let _write_guard = self.shared.write.lock().await;
+        if self.desynchronized() {
+            return Err(KirkError::Ltx(DESYNC_ERROR.to_string()));
         }
-        let batch = PendingBatch {
-            state,
-            ids,
-            first_id,
-            committed: false,
+
+        let ids = {
+            let mut state = self.shared.state.lock().await;
+            if let Some(fatal) = &state.fatal {
+                return Err(KirkError::Ltx(fatal.clone()));
+            }
+            let count = u64::try_from(requests.len())
+                .map_err(|_| KirkError::Ltx("request count does not fit in u64".to_string()))?;
+            state
+                .next_id
+                .checked_add(count)
+                .ok_or_else(|| KirkError::Ltx("request id overflow".to_string()))?;
+            let mut ids = Vec::with_capacity(requests.len());
+            for request in requests {
+                let id = state.next_id;
+                state.next_id += 1;
+                ids.push(id);
+                state.pending.push_back(Pending { id, request });
+            }
+            ids
         };
 
+        // From here on the batch is registered: a write failure or this
+        // future being cancelled mid-write can no longer roll back safely
+        // (the peer may already have acted on partial bytes), so
+        // `SendGuard` desynchronizes the connection instead unless the
+        // write completes cleanly.
+        let guard = SendGuard {
+            shared: &self.shared,
+            committed: false,
+        };
         self.write_infile(&packed).await?;
-        Ok(batch.commit())
+        guard.commit();
+        Ok(ids)
     }
 
     /// Send requests and wait for every reply, preserving request order.
@@ -389,6 +440,9 @@ impl Ltx {
                 let mut state = self.shared.state.lock().await;
                 if let Some(fatal) = &state.fatal {
                     return Err(KirkError::Ltx(fatal.clone()));
+                }
+                if self.desynchronized() {
+                    return Err(KirkError::Ltx(DESYNC_ERROR.to_string()));
                 }
                 if !self.connected() {
                     return Err(KirkError::Ltx("Client is not connected to LTX".to_string()));
@@ -729,12 +783,14 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use kirk_core::KirkError;
 
     use crate::request::{Reply, Request, SlotId};
 
-    use super::Ltx;
     use super::test_support::{Fifos, Seen, run_mock};
+    use super::{Ltx, Pending};
 
     async fn connected_pair(
         tag: &str,
@@ -766,8 +822,6 @@ mod tests {
         mock.await.expect("mock joins");
         fifos.cleanup();
     }
-
-    use std::sync::atomic::Ordering;
 
     #[tokio::test]
     async fn loopback_round_trip() {
@@ -826,19 +880,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_send_rolls_back_pending_requests() {
+    async fn failed_send_desynchronizes_without_reusing_ids() {
         let fifos = Fifos::create("failed-send");
         let ltx = Ltx::new(fifos.infile.clone(), fifos.outfile.clone());
         ltx.connect().await.expect("connect");
         std::fs::remove_file(&fifos.infile).expect("remove input fifo");
 
         let result = ltx.send(vec![Request::version()]).await;
-
         assert!(result.is_err(), "send must fail without an input reader");
-        let state = ltx.shared.state.lock().await;
-        assert!(state.pending.is_empty());
-        assert_eq!(state.next_id, 0);
-        drop(state);
+
+        {
+            let state = ltx.shared.state.lock().await;
+            assert!(
+                !state.pending.is_empty(),
+                "a registered id must not be rolled back after a failed write"
+            );
+            assert_eq!(state.next_id, 1, "the id must not be reused");
+        }
+
+        let second = ltx.send(vec![Request::version()]).await;
+        let err = second.expect_err("a desynchronized connection must reject further sends");
+        assert!(matches!(err, KirkError::Ltx(_)));
+
         let _ = ltx.disconnect().await;
         fifos.cleanup();
     }
@@ -886,6 +949,124 @@ mod tests {
         // Reconnect works after a disconnect.
         ltx.connect().await.expect("reconnect");
         assert!(ltx.connected());
+        shutdown(fifos, ltx, stop, mock).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_blocked_send_desynchronizes_without_locking_state() {
+        use super::Fifo;
+
+        let fifos = Fifos::create("blocked-write");
+        let ltx = Ltx::new(fifos.infile.clone(), fifos.outfile.clone());
+        ltx.connect().await.expect("connect");
+
+        // Peer under test: open both FIFO ends, read a little, then stop
+        // consuming so the client's write stalls on backpressure.
+        let peer_outfile = fifos.outfile.clone();
+        let peer_infile = fifos.infile.clone();
+        let peer = tokio::spawn(async move {
+            let writer = loop {
+                match Fifo::open(&peer_outfile, false) {
+                    Ok(writer) => break writer,
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+                }
+            };
+            drop(writer);
+            let reader = Fifo::open_read(&peer_infile).expect("peer opens infile");
+            let mut chunk = vec![0u8; 4096];
+            let _ = reader.read_chunk(&mut chunk).await;
+            // Stop consuming entirely; hold the reader open so the write end
+            // isn't rejected but the pipe fills up and stays full.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        // A batch far larger than any FIFO buffer, so the write blocks.
+        let big_request =
+            Request::set_file("/tmp/kirk-ltx-blocked-write", &vec![0u8; 4 * 1024 * 1024])
+                .expect("set_file request");
+        let ltx_for_send = ltx.clone();
+        let send = tokio::spawn(async move { ltx_for_send.send(vec![big_request]).await });
+
+        // Give the write time to fill the pipe and start blocking.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            !send.is_finished(),
+            "the write must still be blocked on backpressure"
+        );
+
+        // The state mutex must not be held while the write is stalled: a
+        // non-blocking lock attempt must succeed immediately.
+        assert!(
+            ltx.shared.state.try_lock().is_ok(),
+            "state mutex must not be held during a blocked FIFO write"
+        );
+
+        // Cancel the blocked send, mirroring a caller timing out.
+        send.abort();
+        let _ = send.await;
+
+        {
+            let state = ltx.shared.state.lock().await;
+            assert!(
+                !state.pending.is_empty(),
+                "a registered id must not be rolled back after cancellation"
+            );
+            assert_eq!(state.next_id, 1, "the id must not be reused");
+        }
+
+        let err = ltx
+            .gather(vec![Request::version()])
+            .await
+            .expect_err("a desynchronized connection must reject further sends");
+        assert!(matches!(err, KirkError::Ltx(_)));
+
+        ltx.disconnect().await.expect("disconnect");
+        peer.abort();
+        let _ = peer.await;
+        fifos.cleanup();
+
+        // Recovery targets a genuinely fresh FIFO pair (per design, a
+        // partially written stream is never resynchronized in place); a
+        // fresh `connect()` against it must start with clean local state.
+        let (fresh_fifos, fresh_ltx, fresh_stop, fresh_mock) =
+            connected_pair("blocked-write-fresh").await;
+        let replies = fresh_ltx
+            .gather(vec![Request::version()])
+            .await
+            .expect("gather against the fresh stream");
+        assert_eq!(replies, vec![Reply::Version("0.1-test".to_string())]);
+        shutdown(fresh_fifos, fresh_ltx, fresh_stop, fresh_mock).await;
+    }
+
+    #[tokio::test]
+    async fn connect_resets_stale_local_state() {
+        let (fifos, ltx, stop, mock) = connected_pair("reset-on-connect").await;
+
+        // Simulate leftover state from a prior desynchronized session.
+        {
+            let mut state = ltx.shared.state.lock().await;
+            state.next_id = 7;
+            state.pending.push_back(Pending {
+                id: 3,
+                request: Request::version(),
+            });
+            state.replies.insert(3, Reply::Kill { slot: 0 });
+            state.fatal = Some("stale error".to_string());
+        }
+        ltx.shared.desynced.store(true, Ordering::SeqCst);
+
+        // `disconnect` surfaces the stale fatal error once, as designed.
+        let _ = ltx.disconnect().await;
+        ltx.connect().await.expect("reconnect");
+
+        assert!(!ltx.desynchronized(), "desync marker must clear on connect");
+        let state = ltx.shared.state.lock().await;
+        assert!(state.pending.is_empty(), "pending must clear on connect");
+        assert!(state.replies.is_empty(), "replies must clear on connect");
+        assert_eq!(state.next_id, 0, "id counter must reset on connect");
+        assert!(state.fatal.is_none(), "fatal marker must clear on connect");
+        drop(state);
+
         shutdown(fifos, ltx, stop, mock).await;
     }
 }
