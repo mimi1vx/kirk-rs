@@ -193,6 +193,31 @@ struct State {
     fatal: Option<String>,
 }
 
+struct PendingBatch<'a> {
+    state: tokio::sync::MutexGuard<'a, State>,
+    ids: Vec<u64>,
+    first_id: u64,
+    committed: bool,
+}
+
+impl PendingBatch<'_> {
+    fn commit(mut self) -> Vec<u64> {
+        self.committed = true;
+        std::mem::take(&mut self.ids)
+    }
+}
+
+impl Drop for PendingBatch<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.state
+                .pending
+                .retain(|pending| !self.ids.contains(&pending.id));
+            self.state.next_id = self.first_id;
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Shared {
     state: Mutex<State>,
@@ -324,22 +349,30 @@ impl Ltx {
             packed.extend_from_slice(&request.pack()?);
         }
 
+        let mut state = self.shared.state.lock().await;
+        let first_id = state.next_id;
+        let count = u64::try_from(requests.len())
+            .map_err(|_| KirkError::Ltx("request count does not fit in u64".to_string()))?;
+        state
+            .next_id
+            .checked_add(count)
+            .ok_or_else(|| KirkError::Ltx("request id overflow".to_string()))?;
         let mut ids = Vec::with_capacity(requests.len());
-        {
-            let mut state = self.shared.state.lock().await;
-            for request in requests {
-                let id = state.next_id;
-                state.next_id = state
-                    .next_id
-                    .checked_add(1)
-                    .ok_or_else(|| KirkError::Ltx("request id overflow".to_string()))?;
-                ids.push(id);
-                state.pending.push_back(Pending { id, request });
-            }
+        for request in requests {
+            let id = state.next_id;
+            state.next_id += 1;
+            ids.push(id);
+            state.pending.push_back(Pending { id, request });
         }
+        let batch = PendingBatch {
+            state,
+            ids,
+            first_id,
+            committed: false,
+        };
 
         self.write_infile(&packed).await?;
-        Ok(ids)
+        Ok(batch.commit())
     }
 
     /// Send requests and wait for every reply, preserving request order.
@@ -790,6 +823,24 @@ mod tests {
         let ltx = Ltx::new("/nonexistent-in".into(), "/nonexistent-out".into());
         assert!(ltx.gather(vec![]).await.is_err());
         assert!(ltx.gather(vec![Request::version()]).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_send_rolls_back_pending_requests() {
+        let fifos = Fifos::create("failed-send");
+        let ltx = Ltx::new(fifos.infile.clone(), fifos.outfile.clone());
+        ltx.connect().await.expect("connect");
+        std::fs::remove_file(&fifos.infile).expect("remove input fifo");
+
+        let result = ltx.send(vec![Request::version()]).await;
+
+        assert!(result.is_err(), "send must fail without an input reader");
+        let state = ltx.shared.state.lock().await;
+        assert!(state.pending.is_empty());
+        assert_eq!(state.next_id, 0);
+        drop(state);
+        let _ = ltx.disconnect().await;
+        fifos.cleanup();
     }
 
     #[tokio::test]

@@ -53,8 +53,35 @@ const KERNEL_PANIC_MARKER: &str = "Kernel panic";
 #[derive(Default)]
 struct Inner {
     active: AtomicBool,
-    pids: tokio::sync::Mutex<Vec<u32>>,
+    pids: std::sync::Mutex<Vec<u32>>,
     fetch_lock: tokio::sync::Mutex<()>,
+}
+
+struct TrackedProcess {
+    pid: u32,
+    inner: Arc<Inner>,
+}
+
+impl TrackedProcess {
+    fn new(pid: u32, inner: Arc<Inner>) -> Self {
+        inner
+            .pids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(pid);
+        Self { pid, inner }
+    }
+}
+
+impl Drop for TrackedProcess {
+    fn drop(&mut self) {
+        self.inner
+            .pids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|tracked| *tracked != self.pid);
+        kill_process_group(self.pid);
+    }
 }
 
 /// Shell communication channel.
@@ -251,7 +278,13 @@ impl ComChannel for ShellChannel {
         if !self.is_active() {
             return Ok(());
         }
-        let pids = std::mem::take(&mut *self.inner.pids.lock().await);
+        let pids = std::mem::take(
+            &mut *self
+                .inner
+                .pids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         for pid in &pids {
             kill_process_group(*pid);
         }
@@ -363,7 +396,7 @@ impl ComChannel for ShellChannel {
         let pid = child
             .id()
             .ok_or_else(|| KirkError::Communication(String::from("spawned process has no pid")))?;
-        self.inner.pids.lock().await.push(pid);
+        let _tracked = TrackedProcess::new(pid, Arc::clone(&self.inner));
 
         let start = std::time::Instant::now();
         let mut used = 0usize;
@@ -405,15 +438,6 @@ impl ComChannel for ShellChannel {
             .wait()
             .await
             .map_err(|err| KirkError::Communication(err.to_string()))?;
-
-        self.inner
-            .pids
-            .lock()
-            .await
-            .retain(|tracked| *tracked != pid);
-        // Reap stragglers sharing the group, mirroring upstream's
-        // finally-block kill.
-        kill_process_group(pid);
 
         if saw_panic {
             return Err(KirkError::KernelPanic(String::from(
@@ -488,5 +512,29 @@ mod tests {
         text.push_str("Kernel panic");
         assert!(tail_contains_panic(&text, new_bytes));
         assert!(!tail_contains_panic("no marker here", 5));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_command_removes_tracked_process() {
+        let mut channel = ShellChannel::new();
+        channel.communicate(None).await.expect("channel starts");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            channel.run_command("sleep 60", None, None, None),
+        )
+        .await;
+
+        assert!(result.is_err(), "command must still be running at timeout");
+        assert!(
+            channel
+                .inner
+                .pids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "cancelling run_command must remove its tracked pid"
+        );
     }
 }
