@@ -3,8 +3,11 @@
 //! Parallel tests run as owned [`JoinSet`] tasks gated
 //! by a per-schedule [`Semaphore`]; every task is
 //! joined before `schedule` returns, so no task outlives the call. The
-//! semaphore is recreated per phase (parallel vs sequential) like upstream,
-//! so `stop` waiting on one permit really waits for the running test.
+//! semaphore is recreated per phase (parallel vs sequential) like upstream.
+//! In the parallel phase it holds `max_workers` permits, so `stop`'s single
+//! `acquire_owned()` only proves a worker slot is free, not that every test
+//! has finished; the actual drain guarantee is the `schedule_lock` acquired
+//! right after, which `schedule` holds for its entire body.
 //!
 //! Deliberate differences from upstream:
 //!

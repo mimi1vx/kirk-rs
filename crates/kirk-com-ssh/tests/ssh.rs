@@ -130,3 +130,42 @@ async fn live_run_and_fetch() {
 
     channel.stop(None).await.expect("stop must succeed");
 }
+
+#[tokio::test]
+#[ignore = "needs a live SSH server (set TEST_SSH_HOST)"]
+async fn concurrent_run_command_overlaps_not_serializes() {
+    let Some(mut channel) = connect().await else {
+        return;
+    };
+    let handle_a = channel
+        .concurrent_handle()
+        .expect("ssh must offer a handle");
+    let handle_b = channel
+        .concurrent_handle()
+        .expect("ssh must offer a handle");
+
+    let start = std::time::Instant::now();
+    let (result_a, result_b) = tokio::join!(
+        run_owned(handle_a, "sleep 2"),
+        run_owned(handle_b, "sleep 2")
+    );
+    let elapsed = start.elapsed();
+
+    result_a.expect("run must succeed").expect("result present");
+    result_b.expect("run must succeed").expect("result present");
+    // Serialized execution would take ~4s; concurrent execution over one
+    // shared session should stay well under 2x a single sleep.
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "expected overlap, took {elapsed:?}"
+    );
+
+    channel.stop(None).await.expect("stop must succeed");
+}
+
+async fn run_owned(
+    mut channel: Box<dyn ComChannel>,
+    command: &str,
+) -> Result<Option<kirk_com::CmdResult>, KirkError> {
+    channel.run_command(command, None, None, None).await
+}

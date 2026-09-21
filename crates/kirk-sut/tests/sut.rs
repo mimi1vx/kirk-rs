@@ -38,6 +38,7 @@ struct FakeState {
     commands: Arc<std::sync::Mutex<Vec<String>>>,
     active: Arc<AtomicBool>,
     communicate_calls: Arc<AtomicUsize>,
+    clone_channel_box_calls: Arc<AtomicUsize>,
 }
 
 impl FakeState {
@@ -65,6 +66,7 @@ impl FakeState {
 struct FakeComChannel {
     name: String,
     parallel: bool,
+    offer_concurrent_handle: bool,
     state: FakeState,
 }
 
@@ -73,8 +75,17 @@ impl FakeComChannel {
         Self {
             name: name.to_owned(),
             parallel,
+            offer_concurrent_handle: false,
             state,
         }
+    }
+
+    /// Opt into [`ComChannel::concurrent_handle`], mirroring channels like
+    /// `ShellChannel` whose handle shares live session state instead of
+    /// requiring a fresh [`ComChannel::clone_channel_box`] + communicate.
+    fn with_concurrent_handle(mut self) -> Self {
+        self.offer_concurrent_handle = true;
+        self
     }
 }
 
@@ -96,6 +107,7 @@ impl Plugin for FakeComChannel {
         Box::new(Self {
             name: name.to_owned(),
             parallel: self.parallel,
+            offer_concurrent_handle: self.offer_concurrent_handle,
             state: self.state.clone(),
         })
     }
@@ -158,10 +170,25 @@ impl ComChannel for FakeComChannel {
     }
 
     fn clone_channel_box(&self, new_name: &str) -> Box<dyn ComChannel> {
+        self.state
+            .clone_channel_box_calls
+            .fetch_add(1, Ordering::SeqCst);
         Box::new(Self {
             name: new_name.to_owned(),
             parallel: self.parallel,
+            offer_concurrent_handle: self.offer_concurrent_handle,
             state: self.state.clone(),
+        })
+    }
+
+    fn concurrent_handle(&self) -> Option<Box<dyn ComChannel>> {
+        self.offer_concurrent_handle.then(|| {
+            Box::new(Self {
+                name: self.name.clone(),
+                parallel: self.parallel,
+                offer_concurrent_handle: self.offer_concurrent_handle,
+                state: self.state.clone(),
+            }) as Box<dyn ComChannel>
         })
     }
 }
@@ -385,6 +412,34 @@ async fn get_info_optimized_gathers_same_values() {
     ];
     expected.sort_unstable();
     assert_eq!(recorded, expected);
+}
+
+#[tokio::test]
+async fn get_info_optimized_prefers_concurrent_handle_over_clone() {
+    let state = FakeState::default();
+    let mut registry = Registry::new();
+    registry.register(Box::new(
+        FakeComChannel::new("shell", true, state.clone()).with_concurrent_handle(),
+    ));
+    let mut sut = GenericSut::new();
+    sut.setup_with_registry(&HashMap::new(), &registry)
+        .expect("shell fake must attach");
+    script_info(&state, "fedora", 8192, 4096);
+    sut.set_optimize(true);
+
+    sut.start(None).await.expect("start");
+    let clones_before_gather = state.clone_channel_box_calls.load(Ordering::SeqCst);
+    let info = sut.get_info().await.expect("info");
+
+    assert_eq!(info.distro, "fedora");
+    assert_eq!(info.ram, "8192 kB");
+    assert_eq!(state.recorded().len(), 7);
+    // The gather went through concurrent_handle(), never opening a fresh
+    // clone_channel_box connection per probe (finding A/E: no 7x fan-out).
+    assert_eq!(
+        state.clone_channel_box_calls.load(Ordering::SeqCst),
+        clones_before_gather
+    );
 }
 
 #[tokio::test]

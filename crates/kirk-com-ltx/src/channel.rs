@@ -4,10 +4,12 @@
 //! `fetch_file` traversal rejection live here; the FIFO transport lives in
 //! [`crate::ltx`].
 //!
-//! Concurrency note: the Python channel serializes slot allocation and file
-//! fetches with `asyncio.Lock`s because tasks share one object. Here every
-//! mutating [`kirk_com::ComChannel`] method takes `&mut self`, so the borrow
-//! checker already serializes access and no locks are needed.
+//! Concurrency note: [`ComChannel::concurrent_handle`] hands out
+//! [`LtxChannel`] clones that share the live connection ([`Ltx`] is already
+//! `Arc`-backed) and the slot pool (`slots`, behind a `std::sync::Mutex`),
+//! mirroring the Python channel's `asyncio.Lock`-guarded slot allocation now
+//! that handles genuinely run concurrently instead of being serialized by
+//! the borrow checker's `&mut self`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,13 +54,24 @@ fn check_target_path(path: &str) -> Result<(), KirkError> {
 }
 
 /// Communication channel driving an LTX executor over a FIFO pair.
-#[derive(Debug)]
+///
+/// [`Clone`] shares the live connection and slot pool (used by
+/// [`ComChannel::concurrent_handle`] for concurrent `run_command`/`stop`);
+/// [`Plugin::clone_box`] and [`ComChannel::clone_channel_box`] build a fresh,
+/// disconnected instance instead.
+#[derive(Debug, Clone)]
 pub struct LtxChannel {
     name: String,
     infile: String,
     outfile: String,
-    ltx: Option<Ltx>,
-    slots: Vec<u8>,
+    // `Arc<Ltx>` (not bare `Ltx`): `Ltx`'s `Drop` stops the shared poll task
+    // when *its* last reference goes away, on the assumption that a
+    // dropped `Ltx` means the connection is abandoned. `send_requests`
+    // below clones this handle out on every call; cloning the outer `Arc`
+    // only bumps a refcount, so a transient per-call handle going out of
+    // scope never looks like the connection being abandoned.
+    ltx: Arc<std::sync::Mutex<Option<Arc<Ltx>>>>,
+    slots: Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 impl LtxChannel {
@@ -69,17 +82,51 @@ impl LtxChannel {
             name: "ltx".to_string(),
             infile: String::new(),
             outfile: String::new(),
-            ltx: None,
-            slots: Vec::new(),
+            ltx: Arc::new(std::sync::Mutex::new(None)),
+            slots: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
+    /// Build a fresh, disconnected instance with an empty slot pool,
+    /// sharing no state with `self`.
+    fn disconnected_clone(&self, new_name: &str) -> Self {
+        Self {
+            name: new_name.to_string(),
+            infile: self.infile.clone(),
+            outfile: self.outfile.clone(),
+            ltx: Arc::new(std::sync::Mutex::new(None)),
+            slots: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn slots_lock(&self) -> std::sync::MutexGuard<'_, Vec<u8>> {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn ltx_lock(&self) -> std::sync::MutexGuard<'_, Option<Arc<Ltx>>> {
+        self.ltx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Clone the shared connection handle out of the lock; cloning the
+    /// outer `Arc` is a refcount bump, never invoking `Ltx`'s own `Drop`,
+    /// so this never holds the lock across an `.await`.
+    fn ltx_handle(&self) -> Option<Arc<Ltx>> {
+        self.ltx_lock().clone()
+    }
+
     /// Reserve the first free execution slot, scanning `0..MAX_SLOTS` like
-    /// the Python `_reserve_slot`.
-    fn reserve_slot(&mut self) -> Result<u8, KirkError> {
+    /// the Python `_reserve_slot`. Slots are shared across every
+    /// [`ComChannel::concurrent_handle`] clone, so two handles never
+    /// reserve the same one.
+    fn reserve_slot(&self) -> Result<u8, KirkError> {
+        let mut slots = self.slots_lock();
         for id in 0..MAX_SLOTS {
-            if !self.slots.contains(&id) {
-                self.slots.push(id);
+            if !slots.contains(&id) {
+                slots.push(id);
                 return Ok(id);
             }
         }
@@ -89,20 +136,25 @@ impl LtxChannel {
     }
 
     /// Release an execution slot.
-    fn release_slot(&mut self, slot: u8) {
-        if let Some(position) = self.slots.iter().position(|id| *id == slot) {
-            self.slots.remove(position);
+    fn release_slot(&self, slot: u8) {
+        let mut slots = self.slots_lock();
+        if let Some(position) = slots.iter().position(|id| *id == slot) {
+            slots.remove(position);
         }
+    }
+
+    fn slots_empty(&self) -> bool {
+        self.slots_lock().is_empty()
     }
 
     /// Send `KILL` for every reserved slot; the `stop` half of the Python
     /// slot cleanup (without the drain wait, so tests stay deterministic).
     async fn kill_in_flight(&self) -> Result<(), KirkError> {
-        if self.slots.is_empty() {
+        let slots = self.slots_lock().clone();
+        if slots.is_empty() {
             return Ok(());
         }
-        let kills = self
-            .slots
+        let kills = slots
             .iter()
             .map(|slot| {
                 SlotId::new(*slot)
@@ -117,8 +169,7 @@ impl LtxChannel {
     /// Python `_send_requests`.
     async fn send_requests(&self, requests: Vec<Request>) -> Result<Vec<Reply>, KirkError> {
         let ltx = self
-            .ltx
-            .as_ref()
+            .ltx_handle()
             .ok_or_else(|| KirkError::Communication("LTX connection is not present".to_string()))?;
         ltx.gather(requests)
             .await
@@ -250,13 +301,7 @@ impl Plugin for LtxChannel {
     }
 
     fn clone_box(&self, name: &str) -> Box<dyn Plugin> {
-        Box::new(Self {
-            name: name.to_string(),
-            infile: self.infile.clone(),
-            outfile: self.outfile.clone(),
-            ltx: None,
-            slots: Vec::new(),
-        })
+        Box::new(self.disconnected_clone(name))
     }
 }
 
@@ -267,7 +312,7 @@ impl ComChannel for LtxChannel {
     }
 
     async fn active(&self) -> bool {
-        self.ltx.as_ref().is_some_and(Ltx::connected)
+        self.ltx_lock().as_ref().is_some_and(|ltx| ltx.connected())
     }
 
     async fn communicate(&mut self, _iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
@@ -284,7 +329,7 @@ impl ComChannel for LtxChannel {
             let _ = ltx.disconnect().await;
             return Err(KirkError::Communication(error.to_string()));
         }
-        self.ltx = Some(ltx);
+        *self.ltx_lock() = Some(Arc::new(ltx));
         Ok(())
     }
 
@@ -293,10 +338,11 @@ impl ComChannel for LtxChannel {
             return Ok(());
         }
         self.kill_in_flight().await?;
-        while !self.slots.is_empty() && self.active().await {
+        while !self.slots_empty() && self.active().await {
             tokio::time::sleep(STOP_POLL_INTERVAL).await;
         }
-        if let Some(ltx) = self.ltx.take() {
+        let ltx = self.ltx_lock().take();
+        if let Some(ltx) = ltx {
             ltx.disconnect()
                 .await
                 .map_err(|error| KirkError::Communication(error.to_string()))?;
@@ -354,13 +400,11 @@ impl ComChannel for LtxChannel {
     }
 
     fn clone_channel_box(&self, new_name: &str) -> Box<dyn ComChannel> {
-        Box::new(Self {
-            name: new_name.to_string(),
-            infile: self.infile.clone(),
-            outfile: self.outfile.clone(),
-            ltx: None,
-            slots: Vec::new(),
-        })
+        Box::new(self.disconnected_clone(new_name))
+    }
+
+    fn concurrent_handle(&self) -> Option<Box<dyn ComChannel>> {
+        Some(Box::new(self.clone()))
     }
 }
 
@@ -425,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn slot_pool_exhausts_and_recovers() {
-        let mut channel = LtxChannel::new();
+        let channel = LtxChannel::new();
         let mut held = Vec::new();
         for _ in 0..MAX_SLOTS {
             held.push(channel.reserve_slot().expect("slot"));
@@ -481,9 +525,9 @@ mod tests {
             .expect("result");
         assert_eq!(result.command, "echo hi");
         assert_eq!(result.returncode, 0);
-        assert_eq!(result.stdout, "mock-out");
+        assert_eq!(result.stdout, "mock-out-0");
         assert!(result.exec_time >= 0.0);
-        assert_eq!(sink.lock().await.as_str(), "mock-out");
+        assert_eq!(sink.lock().await.as_str(), "mock-out-0");
 
         let data = channel.fetch_file("/tmp/f").await.expect("fetch");
         assert_eq!(data, b"file-bytes");
@@ -534,6 +578,66 @@ mod tests {
         channel.stop(None).await.expect("stop");
         assert!(!channel.active().await);
 
+        stop.store(1, Ordering::SeqCst);
+        mock.await.expect("mock joins");
+        fifos.cleanup();
+    }
+
+    #[tokio::test]
+    async fn concurrent_handles_reserve_distinct_slots() {
+        let channel = LtxChannel::new();
+        let handle_a = channel.clone();
+        let handle_b = channel.clone();
+
+        let slot_a = handle_a.reserve_slot().expect("slot a");
+        let slot_b = handle_b.reserve_slot().expect("slot b");
+
+        assert_ne!(slot_a, slot_b, "handles share one slot pool");
+        handle_a.release_slot(slot_a);
+        handle_b.release_slot(slot_b);
+        assert!(channel.reserve_slot().is_ok());
+    }
+
+    #[tokio::test]
+    async fn concurrent_run_command_uses_distinct_slots_and_own_output() {
+        let fifos = Fifos::create("concurrent");
+        let seen: Seen = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicU64::new(0));
+        let mock = tokio::spawn(run_mock(
+            fifos.infile.clone(),
+            fifos.outfile.clone(),
+            seen.clone(),
+            stop.clone(),
+        ));
+
+        let mut channel = configured(&fifos);
+        channel.communicate(None).await.expect("communicate");
+
+        let mut handle_a = channel.concurrent_handle().expect("ltx offers a handle");
+        let mut handle_b = channel.concurrent_handle().expect("ltx offers a handle");
+
+        let (result_a, result_b) = tokio::join!(
+            handle_a.run_command("echo a", None, None, None),
+            handle_b.run_command("echo b", None, None, None)
+        );
+        let result_a = result_a.expect("run a").expect("result a");
+        let result_b = result_b.expect("run b").expect("result b");
+
+        assert_eq!(result_a.command, "echo a");
+        assert_eq!(result_b.command, "echo b");
+        // Each result's stdout carries the slot it actually ran on
+        // (see `reply_for`'s OP_EXEC arm); distinct values prove the two
+        // in-flight commands were not cross-delivered onto each other's
+        // slot, the failure mode a shared, unsynchronized `slots` field
+        // would produce.
+        assert_ne!(
+            result_a.stdout, result_b.stdout,
+            "commands must not cross-deliver replies"
+        );
+        assert!(result_a.stdout.starts_with("mock-out-"));
+        assert!(result_b.stdout.starts_with("mock-out-"));
+
+        channel.stop(None).await.expect("stop");
         stop.store(1, Ordering::SeqCst);
         mock.await.expect("mock joins");
         fifos.cleanup();

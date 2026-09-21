@@ -724,7 +724,9 @@ pub(crate) mod test_support {
             }
             OP_EXEC => vec![
                 pack(&(OP_EXEC, slot)),
-                pack(&(OP_LOG, slot, 0_u8, "mock-out")),
+                // Slot embedded in the output lets concurrency tests prove
+                // two in-flight EXECs on different slots don't cross-deliver.
+                pack(&(OP_LOG, slot, 0_u8, format!("mock-out-{slot}"))),
                 pack(&(OP_RESULT, slot, now_ns(), 1_u8, 0_u8)),
             ],
             OP_KILL => vec![pack(&(OP_KILL, slot))],
@@ -848,7 +850,7 @@ mod tests {
                 si_status, stdout, ..
             } => {
                 assert_eq!(*si_status, 0);
-                assert_eq!(stdout, "mock-out");
+                assert_eq!(stdout, "mock-out-0");
             }
             other => panic!("expected execute reply, got {other:?}"),
         }

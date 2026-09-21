@@ -80,12 +80,64 @@ fn timed_out(what: &str) -> KirkError {
     comm(format!("SSH {what} timed out"))
 }
 
+/// Shared live state behind every [`SshChannel`] handle.
+///
+/// [`Clone`] shares the [`Inner`] (used by [`ComChannel::concurrent_handle`]
+/// for concurrent `run_command`/`stop`); [`Plugin::clone_box`] and
+/// [`ComChannel::clone_channel_box`] build a fresh, disconnected [`Inner`]
+/// instead. `session` holds an `Arc<Session>` rather than a bare `Session`
+/// so a caller can clone it out of the lock and drop the guard before
+/// awaiting the russh round trip -- `Session` methods take `&self` and
+/// multiplex channels internally, so this is the only lock kirk holds on
+/// the connection.
+struct Inner {
+    config: SshConfig,
+    session: tokio::sync::Mutex<Option<Arc<Session>>>,
+    max_sessions: std::sync::Mutex<Arc<tokio::sync::Semaphore>>,
+}
+
+impl Inner {
+    fn new(config: SshConfig) -> Self {
+        Self {
+            config,
+            session: tokio::sync::Mutex::new(None),
+            max_sessions: std::sync::Mutex::new(Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_SESSIONS,
+            ))),
+        }
+    }
+
+    fn max_sessions(&self) -> Arc<tokio::sync::Semaphore> {
+        Arc::clone(
+            &self
+                .max_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    fn set_max_sessions(&self, value: usize) {
+        *self
+            .max_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Arc::new(tokio::sync::Semaphore::new(value));
+    }
+}
+
 /// SSH communication channel.
 pub struct SshChannel {
     name: String,
-    config: SshConfig,
-    session: tokio::sync::Mutex<Option<Session>>,
-    max_sessions: Arc<tokio::sync::Semaphore>,
+    inner: Arc<Inner>,
+}
+
+impl Clone for SshChannel {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl SshChannel {
@@ -94,19 +146,22 @@ impl SshChannel {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
-            config: SshConfig::from_map(&HashMap::new())
-                .unwrap_or_else(|_| unreachable_default_config()),
-            session: tokio::sync::Mutex::new(None),
-            max_sessions: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SESSIONS)),
+            inner: Arc::new(Inner::new(
+                SshConfig::from_map(&HashMap::new())
+                    .unwrap_or_else(|_| unreachable_default_config()),
+            )),
         }
     }
 
-    /// Borrow the live session handle, or fail when not connected.
-    fn session_handle<'a>(
-        guard: &'a tokio::sync::MutexGuard<'_, Option<Session>>,
-    ) -> Result<&'a Session, KirkError> {
-        guard
-            .as_ref()
+    /// Clone the live session handle out of the lock, or fail when not
+    /// connected. The lock is held only for the clone, never across the
+    /// caller's subsequent `.await`s on the session.
+    async fn session_arc(&self) -> Result<Arc<Session>, KirkError> {
+        self.inner
+            .session
+            .lock()
+            .await
+            .clone()
             .ok_or_else(|| comm("SSH connection is not present"))
     }
 
@@ -287,16 +342,14 @@ impl Plugin for SshChannel {
     }
 
     fn setup(&mut self, cfg: &HashMap<String, String>) -> Result<(), KirkError> {
-        self.config = SshConfig::from_map(cfg)?;
+        self.inner = Arc::new(Inner::new(SshConfig::from_map(cfg)?));
         Ok(())
     }
 
     fn clone_box(&self, name: &str) -> Box<dyn Plugin> {
         Box::new(Self {
             name: name.to_owned(),
-            config: self.config.clone(),
-            session: tokio::sync::Mutex::new(None),
-            max_sessions: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SESSIONS)),
+            inner: Arc::new(Inner::new(self.inner.config.clone())),
         })
     }
 }
@@ -308,7 +361,7 @@ impl ComChannel for SshChannel {
     }
 
     async fn active(&self) -> bool {
-        self.session.lock().await.is_some()
+        self.inner.session.lock().await.is_some()
     }
 
     async fn communicate(&mut self, _iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
@@ -316,15 +369,15 @@ impl ComChannel for SshChannel {
             return Err(comm("SSH client is already connected"));
         }
         let verifier = HostKeyVerifier {
-            host: self.config.host.clone(),
-            port: self.config.port,
-            known_hosts: self.config.known_hosts.clone(),
+            host: self.inner.config.host.clone(),
+            port: self.inner.config.port,
+            known_hosts: self.inner.config.known_hosts.clone(),
         };
         let mut handle = timeout(
             IO_TIMEOUT,
             russh::client::connect(
                 Arc::new(RusshConfig::default()),
-                (self.config.host.as_str(), self.config.port),
+                (self.inner.config.host.as_str(), self.inner.config.port),
                 verifier,
             ),
         )
@@ -332,19 +385,19 @@ impl ComChannel for SshChannel {
         .map_err(|_| timed_out("connect"))?
         .map_err(|err| comm(err.to_string()))?;
 
-        let authenticated = if let Some(key_file) = self.config.key_file.clone() {
+        let authenticated = if let Some(key_file) = self.inner.config.key_file.clone() {
             authenticate_with_key(
                 &mut handle,
-                &self.config.user,
+                &self.inner.config.user,
                 &key_file,
-                self.config.password.clone(),
+                self.inner.config.password.clone(),
             )
             .await
-        } else if let Some(password) = self.config.password.clone() {
+        } else if let Some(password) = self.inner.config.password.clone() {
             let password: String = password.as_str().to_owned();
             timeout(
                 IO_TIMEOUT,
-                handle.authenticate_password(self.config.user.as_str(), password),
+                handle.authenticate_password(self.inner.config.user.as_str(), password),
             )
             .await
             .map_err(|_| timed_out("authentication"))?
@@ -352,7 +405,7 @@ impl ComChannel for SshChannel {
         } else {
             timeout(
                 IO_TIMEOUT,
-                handle.authenticate_none(self.config.user.as_str()),
+                handle.authenticate_none(self.inner.config.user.as_str()),
             )
             .await
             .map_err(|_| timed_out("authentication"))?
@@ -368,13 +421,13 @@ impl ComChannel for SshChannel {
         }
 
         let max_sessions = Self::probe_max_sessions(&handle).await;
-        self.max_sessions = Arc::new(tokio::sync::Semaphore::new(max_sessions));
-        *self.session.lock().await = Some(handle);
+        self.inner.set_max_sessions(max_sessions);
+        *self.inner.session.lock().await = Some(Arc::new(handle));
         Ok(())
     }
 
     async fn stop(&mut self, iobuffer: Option<Arc<dyn IOBuffer>>) -> Result<(), KirkError> {
-        let handle = self.session.lock().await.take();
+        let handle = self.inner.session.lock().await.take();
         let Some(handle) = handle else {
             return Ok(());
         };
@@ -383,32 +436,26 @@ impl ComChannel for SshChannel {
             handle.disconnect(russh::Disconnect::ByApplication, "", ""),
         )
         .await;
-        self.max_sessions = Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SESSIONS));
-        if let Some(reset_cmd) = self.config.reset_cmd.clone() {
+        self.inner.set_max_sessions(DEFAULT_MAX_SESSIONS);
+        if let Some(reset_cmd) = self.inner.config.reset_cmd.clone() {
             Self::run_reset(&reset_cmd, iobuffer).await?;
         }
         Ok(())
     }
 
-    #[allow(
-        clippy::await_holding_lock,
-        reason = "single non-reentrant session lock; every channel op takes &mut self so no concurrent holder exists, and IOBuffer::write never calls back into the channel"
-    )]
     async fn ping(&mut self) -> Result<f64, KirkError> {
-        let guard = self.session.lock().await;
-        let handle = Self::session_handle(&guard).map_err(|_| comm("SSH client is not running"))?;
+        let handle = self
+            .session_arc()
+            .await
+            .map_err(|_| comm("SSH client is not running"))?;
         let start = Instant::now();
-        let (status, _) = Self::run_remote(handle, "test .", Some(PROBE_TIMEOUT), None).await?;
+        let (status, _) = Self::run_remote(&handle, "test .", Some(PROBE_TIMEOUT), None).await?;
         if status != Some(0) {
             return Err(comm("SSH ping failed"));
         }
         Ok(start.elapsed().as_secs_f64())
     }
 
-    #[allow(
-        clippy::await_holding_lock,
-        reason = "single non-reentrant session lock; every channel op takes &mut self so no concurrent holder exists, and IOBuffer::write never calls back into the channel"
-    )]
     async fn run_command(
         &mut self,
         command: &str,
@@ -419,15 +466,14 @@ impl ComChannel for SshChannel {
         if command.is_empty() {
             return Err(comm("command is empty"));
         }
-        let guard = self.session.lock().await;
-        let handle = Self::session_handle(&guard)?;
+        let handle = self.session_arc().await?;
         let _permit = self
-            .max_sessions
-            .clone()
+            .inner
+            .max_sessions()
             .acquire_owned()
             .await
             .map_err(|err| comm(err.to_string()))?;
-        let remote = build_remote_command(command, cwd, env, self.config.sudo)?;
+        let remote = build_remote_command(command, cwd, env, self.inner.config.sudo)?;
         let start = Instant::now();
         let mut channel = timeout(IO_TIMEOUT, handle.channel_open_session())
             .await
@@ -474,19 +520,14 @@ impl ComChannel for SshChannel {
         }))
     }
 
-    #[allow(
-        clippy::await_holding_lock,
-        reason = "single non-reentrant session lock; every channel op takes &mut self so no concurrent holder exists, and IOBuffer::write never calls back into the channel"
-    )]
     async fn fetch_file(&mut self, target_path: &str) -> Result<Vec<u8>, KirkError> {
         if target_path.is_empty() {
             return Err(comm("target path is empty"));
         }
-        let guard = self.session.lock().await;
-        let handle = Self::session_handle(&guard)?;
+        let handle = self.session_arc().await?;
         let remote = format!("cat -- {}", quote_sh(target_path));
         let (status, data) =
-            Self::run_remote(handle, &remote, Some(IO_TIMEOUT), Some(FETCH_SIZE_CAP)).await?;
+            Self::run_remote(&handle, &remote, Some(IO_TIMEOUT), Some(FETCH_SIZE_CAP)).await?;
         if status != Some(0) {
             return Err(comm("failed to fetch remote file"));
         }
@@ -496,10 +537,12 @@ impl ComChannel for SshChannel {
     fn clone_channel_box(&self, new_name: &str) -> Box<dyn ComChannel> {
         Box::new(Self {
             name: new_name.to_owned(),
-            config: self.config.clone(),
-            session: tokio::sync::Mutex::new(None),
-            max_sessions: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SESSIONS)),
+            inner: Arc::new(Inner::new(self.inner.config.clone())),
         })
+    }
+
+    fn concurrent_handle(&self) -> Option<Box<dyn ComChannel>> {
+        Some(Box::new(self.clone()))
     }
 }
 

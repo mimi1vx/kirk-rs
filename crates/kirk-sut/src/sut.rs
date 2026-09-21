@@ -9,12 +9,12 @@
 //!
 //! Deliberate differences from upstream:
 //!
-//! * The parallel gather cannot share one channel object: every
-//!   [`ComChannel`] method takes `&mut self`, so each
-//!   probe runs on an independent clone
-//!   ([`ComChannel::clone_channel_box`])
-//!   that is communicated first. Probes only run in parallel when the
-//!   channel reports [`parallel_execution`](kirk_com::ComChannel::parallel_execution);
+//! * The parallel gather prefers [`ComChannel::concurrent_handle`] so probes
+//!   share the live session (one connection, not seven); channels without a
+//!   handle fall back to an independent clone
+//!   ([`ComChannel::clone_channel_box`]) that is communicated first. Probes
+//!   only run in parallel when the channel reports
+//!   [`parallel_execution`](kirk_com::ComChannel::parallel_execution);
 //!   otherwise `optimize` falls back to sequential probing with identical results.
 //! * The taint cache never holds a lock across an `.await`. A probe in flight
 //!   is tracked with a flag under short [`Mutex`](tokio::sync::Mutex)
@@ -416,16 +416,25 @@ async fn run_probes_sequential<S: Sut + ?Sized>(sut: &mut S) -> Result<[String; 
     Ok(values)
 }
 
-/// Run the [`PROBE_COMMANDS`] concurrently, one independent channel clone
-/// per probe, re-associated by index because [`JoinSet`] completion order is
-/// arbitrary.
+/// Run the [`PROBE_COMMANDS`] concurrently, one channel handle per probe.
+/// A [`ComChannel::concurrent_handle`] is preferred when the channel offers
+/// one, since it shares the live session instead of opening a fresh
+/// connection; only channels without a handle fall back to
+/// [`ComChannel::clone_channel_box`] plus `ensure_communicate`. Probes are
+/// re-associated by index because [`JoinSet`] completion order is arbitrary.
 async fn run_probes_parallel<S: Sut + ?Sized>(sut: &mut S) -> Result<[String; 7], KirkError> {
     let mut set = JoinSet::new();
     for (index, cmd) in PROBE_COMMANDS.iter().enumerate() {
-        let mut clone = sut.channel_mut()?.clone_channel_box("sut-probe");
+        let channel = sut.channel_mut()?;
+        let mut clone = if let Some(handle) = channel.concurrent_handle() {
+            handle
+        } else {
+            let mut clone = channel.clone_channel_box("sut-probe");
+            clone.ensure_communicate(None, COMMUNICATE_RETRIES).await?;
+            clone
+        };
         let cmd = (*cmd).to_owned();
         set.spawn(async move {
-            clone.ensure_communicate(None, COMMUNICATE_RETRIES).await?;
             let output =
                 match timeout(RUN_CMD_TIMEOUT, clone.run_command(&cmd, None, None, None)).await {
                     Err(_) | Ok(Ok(None)) => UNKNOWN.to_owned(),

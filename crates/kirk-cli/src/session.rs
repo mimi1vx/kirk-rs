@@ -219,8 +219,12 @@ impl CliSut {
     /// Wrap a shared SUT, caching the sync accessors.
     #[must_use]
     fn new(sut: SutHandle, events: EventRegistry) -> Self {
+        // A capability must never be assumed on lock contention: default to
+        // the conservative `false` (matches the "SUT doesn't support
+        // parallel execution" warning path) rather than claiming a SUT
+        // supports concurrency it was never actually checked for.
         let (name, parallel) = sut.try_lock().map_or_else(
-            |_| (String::from("default"), true),
+            |_| (String::from("default"), false),
             |guard| {
                 (
                     guard.name().to_owned(),
@@ -696,6 +700,28 @@ mod tests {
             captured.lock().expect("event store lock").as_slice(),
             ["reset helper output\n"]
         );
+    }
+
+    /// `FailingResetChannel.parallel_execution() == false`, playing the role
+    /// of QEMU (the one builtin that honestly advertises no parallel
+    /// support) without needing a real QEMU image/tmpdir config.
+    #[tokio::test]
+    async fn lock_contention_never_asserts_parallel_execution() {
+        let mut registry = Registry::new();
+        registry.register(Box::new(FailingResetChannel));
+        let mut sut = GenericSut::new();
+        sut.setup_with_registry(&HashMap::new(), &registry)
+            .expect("fake channel must attach");
+        let shared: SutHandle = Arc::new(Mutex::new(sut));
+        let events = EventRegistry::new();
+
+        // Hold the lock so `CliSut::new`'s `try_lock()` hits the contended
+        // branch (finding C): a capability must never be assumed there.
+        let guard = shared.try_lock().expect("uncontended at test start");
+        let cli_sut = CliSut::new(Arc::clone(&shared), events.clone());
+        drop(guard);
+
+        assert!(!cli_sut.session_parallel_execution());
     }
 
     #[test]
