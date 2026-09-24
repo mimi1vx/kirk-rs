@@ -163,6 +163,43 @@ async fn concurrent_run_command_overlaps_not_serializes() {
     channel.stop(None).await.expect("stop must succeed");
 }
 
+#[tokio::test]
+#[ignore = "needs a live SSH server (set TEST_SSH_HOST)"]
+async fn fetch_file_survives_transfer_longer_than_io_timeout() {
+    let Some(mut channel) = connect().await else {
+        return;
+    };
+    let path = format!("/tmp/kirk_ssh_slow_fifo_{}", std::process::id());
+    channel
+        .run_command(&format!("rm -f {path}; mkfifo {path}"), None, None, None)
+        .await
+        .expect("run must succeed")
+        .expect("result must be present");
+    // Delay opening the writer past IO_TIMEOUT (10s): fetch_file's `cat`
+    // blocks on the fifo open/read until this backgrounded writer opens
+    // it, so the whole fetch takes longer than the old overall bound.
+    channel
+        .run_command(
+            &format!("(sleep 12; echo -n slow-data > {path}) >/dev/null 2>&1 &"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("run must succeed");
+
+    let data = channel
+        .fetch_file(&path)
+        .await
+        .expect("fetch must survive a transfer longer than IO_TIMEOUT");
+    assert_eq!(data, b"slow-data");
+
+    let _ = channel
+        .run_command(&format!("rm -f {path}"), None, None, None)
+        .await;
+    channel.stop(None).await.expect("stop must succeed");
+}
+
 async fn run_owned(
     mut channel: Box<dyn ComChannel>,
     command: &str,

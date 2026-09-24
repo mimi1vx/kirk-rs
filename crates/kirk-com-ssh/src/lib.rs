@@ -17,8 +17,9 @@
 //! - `reset_cmd` runs via argv, never via a shell (upstream uses
 //!   `create_subprocess_shell`).
 //! - `fetch_file` enforces `FETCH_SIZE_CAP`.
-//! - No overall timeout on the `run_command` data loop (matches upstream
-//!   `wait_closed`); every initiating call (dial/auth/open/exec) has one.
+//! - No overall timeout on the `run_command` or `fetch_file` data loops
+//!   (matches upstream `wait_closed`); every initiating call
+//!   (dial/auth/open/exec) has one.
 
 pub mod config;
 
@@ -526,8 +527,7 @@ impl ComChannel for SshChannel {
         }
         let handle = self.session_arc().await?;
         let remote = format!("cat -- {}", quote_sh(target_path));
-        let (status, data) =
-            Self::run_remote(&handle, &remote, Some(IO_TIMEOUT), Some(FETCH_SIZE_CAP)).await?;
+        let (status, data) = Self::run_remote(&handle, &remote, None, Some(FETCH_SIZE_CAP)).await?;
         if status != Some(0) {
             return Err(comm("failed to fetch remote file"));
         }
