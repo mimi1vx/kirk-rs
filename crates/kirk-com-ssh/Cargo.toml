@@ -16,4 +16,4 @@ kirk-core = { path = "../kirk-core" }
 kirk-plugin = { path = "../kirk-plugin" }
 # Workspace pins russh 0.54, which is not vendored in the offline cargo
 # cache (only 0.62/0.63 are). Declared directly per task instructions.
-russh = { version = "0.63" }
+russh = { version = "0.64" }
