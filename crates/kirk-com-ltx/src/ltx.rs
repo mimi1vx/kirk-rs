@@ -80,7 +80,10 @@ impl Fifo {
             options.write(true);
         }
         options.custom_flags(libc::O_NONBLOCK);
-        options.open(path).and_then(AsyncFd::new)
+        let file = options.open(path)?;
+        // SAFETY: the `AsyncFd` owns `file` and nothing closes or replaces its
+        // descriptor (only `get_ref` is used), so the fd stays open and unchanged.
+        unsafe { AsyncFd::register(file) }.map_err(std::io::Error::from)
     }
 
     /// Read one chunk; resolves to `0` once all writers went away.
